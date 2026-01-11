@@ -40,6 +40,11 @@ static constexpr int QrY = 70;
 static constexpr int QrSize = 220;
 
 static constexpr int StableWindow = 6;
+static constexpr int32_t ZeroSnapDelta = 200;
+static constexpr int32_t PayTriggerDelta = 800;
+static constexpr float DisplayStep = 0.1f;
+static constexpr float DisplayHysteresis = 0.15f;
+static constexpr float StableUnlockDelta = 0.3f;
 static int32_t deltaWindow[StableWindow];
 static int weightWindowCount = 0;
 static int weightWindowIndex = 0;
@@ -47,11 +52,26 @@ static int stableHits = 0;
 static bool hasLastDelta = false;
 static int32_t lastDelta = 0;
 static uint32_t glitchCount = 0;
+static bool filteredInit = false;
+static float filteredDelta = 0.0f;
+static bool hasLastFilteredDelta = false;
+static int32_t lastFilteredDelta = 0;
+static bool displayLocked = false;
+static float lockedWeight = 0.0f;
+static bool hasLastShownWeight = false;
+static float lastShownWeight = 0.0f;
 
 static void resetDeltaWindow() {
   weightWindowCount = 0;
   weightWindowIndex = 0;
   stableHits = 0;
+  displayLocked = false;
+  hasLastShownWeight = false;
+}
+
+static float quantize(float v, float step) {
+  if (step <= 0.0f) return v;
+  return roundf(v / step) * step;
 }
 
 enum class AppState : uint8_t {
@@ -117,11 +137,7 @@ static void drawWifiStatus() {
 
 static void drawWeight(bool stable, float weight) {
   char buf[32];
-  if (stable) {
-    snprintf(buf, sizeof(buf), "%.2f", weight);
-  } else {
-    snprintf(buf, sizeof(buf), "----");
-  }
+  snprintf(buf, sizeof(buf), "%.1f", weight);
   display.beginWrite();
   sevenSeg.clearRect(WeightX, WeightY, WeightW, WeightH, ColorWhite);
   sevenSeg.drawText(WeightX + 6, WeightY + 6, buf, 4, ColorBlack, ColorWhite);
@@ -140,6 +156,10 @@ static void tryTareNow() {
   lastTareMs = now;
   hx711->tare(30, 500);
   hasLastDelta = false;
+  filteredInit = false;
+  hasLastFilteredDelta = false;
+  displayLocked = false;
+  hasLastShownWeight = false;
   resetDeltaWindow();
   drawStatusBar(ColorBlue);
   Serial.println("tare done");
@@ -224,6 +244,8 @@ void loop() {
         glitchCount++;
         resetDeltaWindow();
         lastDelta = delta;
+        filteredInit = false;
+        hasLastFilteredDelta = false;
         uint32_t now = millis();
         if (now - lastHx711LogMs > 1000) {
           lastHx711LogMs = now;
@@ -235,20 +257,67 @@ void loop() {
     lastDelta = delta;
 
     pushDelta(delta);
-    int32_t stableDelta = 0;
-    int32_t range = 0;
-    bool stableNow = computeStableDelta(stableDelta, range);
+    if (!filteredInit) {
+      filteredDelta = (float)delta;
+      filteredInit = true;
+    } else {
+      filteredDelta = filteredDelta + 0.25f * ((float)delta - filteredDelta);
+    }
+
+    int32_t displayDelta = (int32_t)lroundf(filteredDelta);
+    int32_t absDisplayDelta = displayDelta < 0 ? -displayDelta : displayDelta;
+    if (absDisplayDelta < ZeroSnapDelta) displayDelta = 0;
+    float displayWeight = (float)displayDelta / hx711->scale();
+    float quantizedWeight = quantize(displayWeight, DisplayStep);
+    if (hasLastShownWeight) {
+      if (fabsf(quantizedWeight - lastShownWeight) < DisplayHysteresis) {
+        quantizedWeight = lastShownWeight;
+      }
+    }
+
+    bool stableNow = false;
+    int32_t diffDisplay = 0;
+    int32_t stableThreshold = 0;
+    if (hasLastFilteredDelta) {
+      diffDisplay = displayDelta - lastFilteredDelta;
+      if (diffDisplay < 0) diffDisplay = -diffDisplay;
+      stableThreshold = 120 + absDisplayDelta / 500;
+      if (stableThreshold > 500) stableThreshold = 500;
+      stableNow = diffDisplay <= stableThreshold;
+    }
+    hasLastFilteredDelta = true;
+    lastFilteredDelta = displayDelta;
+
     if (stableNow) {
       if (stableHits < 255) stableHits++;
     } else {
       stableHits = 0;
     }
-    bool stable = stableHits >= 2;
-    float stableWeight = (float)stableDelta / hx711->scale();
-    drawWeight(stable, stable ? stableWeight : w);
+    bool stable = stableHits >= 6;
+    float shownWeight = quantizedWeight;
+    if (stable) {
+      if (!displayLocked) {
+        displayLocked = true;
+        lockedWeight = quantizedWeight;
+      }
+      shownWeight = lockedWeight;
+    } else if (displayLocked) {
+      if (fabsf(quantizedWeight - lockedWeight) > StableUnlockDelta) {
+        displayLocked = false;
+      } else {
+        shownWeight = lockedWeight;
+      }
+    }
+    hasLastShownWeight = true;
+    lastShownWeight = shownWeight;
+    drawWeight(stable, shownWeight);
 
     if (stable && wifi.isConnected()) {
-      lastStableWeight = stableWeight;
+      if (absDisplayDelta < PayTriggerDelta) {
+        delay(100);
+        return;
+      }
+      lastStableWeight = shownWeight;
       drawStatusBar(ColorBlue);
       state = AppState::CreatingPayment;
     }
@@ -256,7 +325,7 @@ void loop() {
     uint32_t now = millis();
     if (now - lastHx711LogMs > 600) {
       lastHx711LogMs = now;
-      Serial.printf("raw=%ld delta=%ld weight=%.3f stable=%d hits=%d range=%ld\n", (long)raw, (long)delta, w, stable ? 1 : 0, stableHits, (long)range);
+      Serial.printf("raw=%ld delta=%ld fdelta=%ld weight=%.3f stable=%d hits=%d dd=%ld th=%ld\n", (long)raw, (long)delta, (long)displayDelta, displayWeight, stable ? 1 : 0, stableHits, (long)diffDisplay, (long)stableThreshold);
     }
 
     delay(100);

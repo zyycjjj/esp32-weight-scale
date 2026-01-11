@@ -48,18 +48,7 @@ bool PaymentClient::extractJsonBoolField(const String &json, const char *field, 
 }
 
 bool PaymentClient::create(const PaymentCreateRequest &req, PaymentCreateResponse &res) {
-  HTTPClient http;
   String url = urlJoin(baseUrl_, "/payment/create");
-  if (isHttpsUrl(url)) {
-    WiFiClientSecure client;
-    client.setInsecure();
-    if (!http.begin(client, url)) return false;
-  } else {
-    if (!http.begin(url)) return false;
-  }
-
-  http.addHeader("Content-Type", "application/json");
-
   String body = "{";
   body += "\"description\":\"" + String(req.description ? req.description : "") + "\",";
   body += "\"amount\":" + String(req.amount, 2) + ",";
@@ -67,14 +56,27 @@ bool PaymentClient::create(const PaymentCreateRequest &req, PaymentCreateRespons
   body += "\"deviceName\":\"" + String(req.deviceName ? req.deviceName : "") + "\"";
   body += "}";
 
-  int code = http.POST(body);
-  if (code <= 0) {
-    http.end();
-    return false;
-  }
+  int code = -1;
+  String payload;
 
-  String payload = http.getString();
-  http.end();
+  if (isHttpsUrl(url)) {
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+    if (!http.begin(client, url)) return false;
+    http.addHeader("Content-Type", "application/json");
+    code = http.POST(body);
+    if (code > 0) payload = http.getString();
+    http.end();
+  } else {
+    WiFiClient client;
+    HTTPClient http;
+    if (!http.begin(client, url)) return false;
+    http.addHeader("Content-Type", "application/json");
+    code = http.POST(body);
+    if (code > 0) payload = http.getString();
+    http.end();
+  }
 
   if (code != 200) return false;
 
@@ -88,22 +90,27 @@ bool PaymentClient::create(const PaymentCreateRequest &req, PaymentCreateRespons
 }
 
 bool PaymentClient::query(const char *outTradeNo, PaymentQueryResponse &res) {
-  HTTPClient http;
   String url = urlJoin(baseUrl_, "/payment/query?outTradeNo=") + String(outTradeNo ? outTradeNo : "");
+  int code = -1;
+  String payload;
+
   if (isHttpsUrl(url)) {
     WiFiClientSecure client;
     client.setInsecure();
+    HTTPClient http;
     if (!http.begin(client, url)) return false;
-  } else {
-    if (!http.begin(url)) return false;
-  }
-  int code = http.GET();
-  if (code <= 0) {
+    code = http.GET();
+    if (code > 0) payload = http.getString();
     http.end();
-    return false;
+  } else {
+    WiFiClient client;
+    HTTPClient http;
+    if (!http.begin(client, url)) return false;
+    code = http.GET();
+    if (code > 0) payload = http.getString();
+    http.end();
   }
-  String payload = http.getString();
-  http.end();
+
   if (code != 200) return false;
 
   bool success = false;
