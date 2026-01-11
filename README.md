@@ -1,29 +1,35 @@
-# Factory Example
+# ESP-BOX Weight Scale (Arduino + PlatformIO)
 
-| Board             | Support Status |
-| ----------------- | -------------- |
-| ESP32-S3-BOX      | YES            |
-| ESP32-S3-BOX-Lite | YES            |
-| ESP32-S3-BOX-3    | YES            |
+最小可用固件：ESP-BOX 屏幕稳定点亮（ST7789：N C0），并可进行 HX711 读数验证。
 
+## 快速开始
 
-The factory_demo is a built-in firmware of ESP32-S3-BOX-3, which integrates LVGL, ESP-Rainmaker and ESP-SR. This example is also adaptable for use with ESP32-S3-BOX and ESP32-S3-BOX-Lite. You can choose your development board via the menuconfig settings when compiling the example.
+### 硬件
 
-## How to use example
+- ESP32-S3-BOX / ESP32-S3-BOX-3
+- HX711 模块（可选，用于称重）
+- 负载传感器（可选）
 
-<font color="red">[Note]: </font>This example requires ESP-IDF release/v5.1 or later.
+默认 HX711 引脚：
 
-Please check the [User Guide](../../docs/getting_started.md) for more details about how to use the demo.
+- DOUT: GPIO1
+- SCK: GPIO2
 
-### Hardware Required
+### 一键编译烧录
 
-* A ESP32-S3-BOX-3
-* A USB-C cable for power supply and programming
+```bash
+make flash_monitor
+```
 
-### Build and Flash
+常用命令：
 
-Run `idf.py flash monitor` to build, flash and monitor the project.
+- `make flash`：只烧录
+- `make monitor`：只打开串口
+- `make port_check` / `make port_free`：检查/释放串口占用
 
-Once a complete flash process has been performed, you can use `idf.py app-flash monitor` to reduce the flash time.
+## 目录结构
 
-(To exit the serial monitor, type `Ctrl-]`. Please reset the development board f you cannot exit the monitor.)
+- `src/main.cpp`：Arduino 固件入口（屏幕 + HX711）
+- `platformio.ini`：PlatformIO 配置
+- `Makefile`：一键命令封装
+- `HX711_CONNECTION_GUIDE.md`：HX711 接线说明
