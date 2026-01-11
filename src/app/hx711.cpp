@@ -5,7 +5,7 @@ namespace aiw {
 Hx711::Hx711(Hx711Pins pins) : pins_(pins) {}
 
 void Hx711::begin() {
-  pinMode(pins_.dout, INPUT);
+  pinMode(pins_.dout, INPUT_PULLUP);
   pinMode(pins_.sck, OUTPUT);
   digitalWrite(pins_.sck, LOW);
 }
@@ -80,4 +80,3 @@ bool Hx711::readWeight(float &weight) {
 }
 
 }  // namespace aiw
-

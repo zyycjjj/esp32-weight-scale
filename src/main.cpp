@@ -137,10 +137,10 @@ void setup() {
   drawWifiStatus();
 
   hx711A.begin();
-  int32_t rawA = hx711A.readRaw(200);
+  int32_t rawA = hx711A.readRaw(500);
   if (rawA == INT32_MIN) {
     hx711B.begin();
-    int32_t rawB = hx711B.readRaw(200);
+    int32_t rawB = hx711B.readRaw(500);
     if (rawB != INT32_MIN) {
       hx711 = &hx711B;
       Serial.printf("hx711 pins swapped dout=%d sck=%d\n", aiw::config::Hx711SckPin, aiw::config::Hx711DoutPin);
@@ -149,6 +149,9 @@ void setup() {
     }
   } else {
     Serial.printf("hx711 ok dout=%d sck=%d raw=%ld\n", aiw::config::Hx711DoutPin, aiw::config::Hx711SckPin, (long)rawA);
+    if (rawA == 0) {
+      Serial.println("hx711 raw=0 (dout may be floating/shorted or wrong pins)");
+    }
   }
   hx711->tare(20, 200);
 }
