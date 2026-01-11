@@ -40,9 +40,13 @@ static constexpr int QrY = 70;
 static constexpr int QrSize = 220;
 
 static constexpr int StableWindow = 15;
-static float weightWindow[StableWindow];
+static int32_t deltaWindow[StableWindow];
 static int weightWindowCount = 0;
 static int weightWindowIndex = 0;
+static int stableHits = 0;
+static bool hasLastDelta = false;
+static int32_t lastDelta = 0;
+static uint32_t glitchCount = 0;
 
 enum class AppState : uint8_t {
   Weighing = 0,
@@ -59,27 +63,31 @@ static aiw::QrMatrix qrMatrix;
 static uint32_t lastPollMs = 0;
 static uint32_t lastHx711LogMs = 0;
 
-static void pushWeight(float w) {
-  weightWindow[weightWindowIndex] = w;
+static void pushDelta(int32_t d) {
+  deltaWindow[weightWindowIndex] = d;
   weightWindowIndex = (weightWindowIndex + 1) % StableWindow;
   if (weightWindowCount < StableWindow) weightWindowCount++;
 }
 
-static bool computeStable(float &meanOut) {
+static bool computeStableDelta(int32_t &meanOut, int32_t &rangeOut) {
   if (weightWindowCount < StableWindow) return false;
-  float minV = weightWindow[0];
-  float maxV = weightWindow[0];
-  float sum = 0.0f;
+  int32_t minV = deltaWindow[0];
+  int32_t maxV = deltaWindow[0];
+  int64_t sum = 0;
   for (int i = 0; i < StableWindow; ++i) {
-    float v = weightWindow[i];
+    int32_t v = deltaWindow[i];
     if (v < minV) minV = v;
     if (v > maxV) maxV = v;
     sum += v;
   }
-  meanOut = sum / (float)StableWindow;
-  float range = maxV - minV;
-  if (range > 0.03f) return false;
-  if (fabsf(meanOut) < 0.05f) return false;
+  meanOut = (int32_t)(sum / (int64_t)StableWindow);
+  rangeOut = (int32_t)(maxV - minV);
+  int32_t absMean = meanOut < 0 ? -meanOut : meanOut;
+  int32_t threshold = absMean / 50;
+  if (threshold < 120) threshold = 120;
+  if (threshold > 800) threshold = 800;
+  if (rangeOut > threshold) return false;
+  if (absMean < 200) return false;
   return true;
 }
 
@@ -168,8 +176,8 @@ void loop() {
   }
 
   if (state == AppState::Weighing) {
-    float w = 0.0f;
-    if (!hx711->readWeight(w)) {
+    int32_t raw = hx711->readAverage(5, 200);
+    if (raw == INT32_MIN) {
       uint32_t now = millis();
       if (now - lastHx711LogMs > 1000) {
         lastHx711LogMs = now;
@@ -180,15 +188,49 @@ void loop() {
       return;
     }
 
-    pushWeight(w);
-    float stableWeight = 0.0f;
-    bool stable = computeStable(stableWeight);
+    int32_t delta = raw - hx711->offset();
+    float w = (float)delta / hx711->scale();
+
+    if (hasLastDelta) {
+      int32_t diff = delta - lastDelta;
+      if (diff < 0) diff = -diff;
+      if (diff > 2000) {
+        glitchCount++;
+        uint32_t now = millis();
+        if (now - lastHx711LogMs > 1000) {
+          lastHx711LogMs = now;
+          Serial.printf("hx711 glitch raw=%ld delta=%ld last=%ld diff=%ld count=%lu\n", (long)raw, (long)delta, (long)lastDelta, (long)diff, (unsigned long)glitchCount);
+        }
+        delay(50);
+        return;
+      }
+    }
+    hasLastDelta = true;
+    lastDelta = delta;
+
+    pushDelta(delta);
+    int32_t stableDelta = 0;
+    int32_t range = 0;
+    bool stableNow = computeStableDelta(stableDelta, range);
+    if (stableNow) {
+      if (stableHits < 255) stableHits++;
+    } else {
+      stableHits = 0;
+    }
+    bool stable = stableHits >= 5;
+    float stableWeight = (float)stableDelta / hx711->scale();
     drawWeight(stable, stable ? stableWeight : w);
 
     if (stable && wifi.isConnected()) {
       lastStableWeight = stableWeight;
       drawStatusBar(ColorBlue);
       state = AppState::CreatingPayment;
+    }
+
+    uint32_t now = millis();
+    if (now - lastHx711LogMs > 1000) {
+      lastHx711LogMs = now;
+      Serial.printf("raw=%ld delta=%ld weight=%.3f stable=%d hits=%d range=%ld\n", (long)raw, (long)delta, w, stable ? 1 : 0, stableHits, (long)range);
     }
 
     delay(200);
