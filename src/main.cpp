@@ -48,6 +48,12 @@ static bool hasLastDelta = false;
 static int32_t lastDelta = 0;
 static uint32_t glitchCount = 0;
 
+static void resetDeltaWindow() {
+  weightWindowCount = 0;
+  weightWindowIndex = 0;
+  stableHits = 0;
+}
+
 enum class AppState : uint8_t {
   Weighing = 0,
   CreatingPayment = 1,
@@ -196,13 +202,13 @@ void loop() {
       if (diff < 0) diff = -diff;
       if (diff > 2000) {
         glitchCount++;
+        resetDeltaWindow();
+        lastDelta = delta;
         uint32_t now = millis();
         if (now - lastHx711LogMs > 1000) {
           lastHx711LogMs = now;
-          Serial.printf("hx711 glitch raw=%ld delta=%ld last=%ld diff=%ld count=%lu\n", (long)raw, (long)delta, (long)lastDelta, (long)diff, (unsigned long)glitchCount);
+          Serial.printf("hx711 jump raw=%ld delta=%ld last=%ld diff=%ld reset=%lu\n", (long)raw, (long)delta, (long)lastDelta, (long)diff, (unsigned long)glitchCount);
         }
-        delay(50);
-        return;
       }
     }
     hasLastDelta = true;
