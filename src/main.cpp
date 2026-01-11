@@ -39,7 +39,7 @@ static constexpr int QrX = 10;
 static constexpr int QrY = 70;
 static constexpr int QrSize = 220;
 
-static constexpr int StableWindow = 15;
+static constexpr int StableWindow = 6;
 static int32_t deltaWindow[StableWindow];
 static int weightWindowCount = 0;
 static int weightWindowIndex = 0;
@@ -68,6 +68,7 @@ static aiw::PaymentCreateResponse payCreateRes;
 static aiw::QrMatrix qrMatrix;
 static uint32_t lastPollMs = 0;
 static uint32_t lastHx711LogMs = 0;
+static uint32_t lastTareMs = 0;
 
 static void pushDelta(int32_t d) {
   deltaWindow[weightWindowIndex] = d;
@@ -76,22 +77,23 @@ static void pushDelta(int32_t d) {
 }
 
 static bool computeStableDelta(int32_t &meanOut, int32_t &rangeOut) {
-  if (weightWindowCount < StableWindow) return false;
+  const int n = weightWindowCount < StableWindow ? weightWindowCount : StableWindow;
+  if (n < 4) return false;
   int32_t minV = deltaWindow[0];
   int32_t maxV = deltaWindow[0];
   int64_t sum = 0;
-  for (int i = 0; i < StableWindow; ++i) {
+  for (int i = 0; i < n; ++i) {
     int32_t v = deltaWindow[i];
     if (v < minV) minV = v;
     if (v > maxV) maxV = v;
     sum += v;
   }
-  meanOut = (int32_t)(sum / (int64_t)StableWindow);
+  meanOut = (int32_t)(sum / (int64_t)n);
   rangeOut = (int32_t)(maxV - minV);
   int32_t absMean = meanOut < 0 ? -meanOut : meanOut;
-  int32_t threshold = absMean / 50;
-  if (threshold < 120) threshold = 120;
-  if (threshold > 800) threshold = 800;
+  int32_t threshold = absMean / 40;
+  if (threshold < 160) threshold = 160;
+  if (threshold > 900) threshold = 900;
   if (rangeOut > threshold) return false;
   if (absMean < 30) return false;
   return true;
@@ -130,6 +132,17 @@ static void drawStatusBar(uint16_t color) {
   display.beginWrite();
   display.fillRect(0, 190, aiw::DisplaySt7789::Width, 50, color);
   display.endWrite();
+}
+
+static void tryTareNow() {
+  uint32_t now = millis();
+  if (now - lastTareMs < 1500) return;
+  lastTareMs = now;
+  hx711->tare(30, 500);
+  hasLastDelta = false;
+  resetDeltaWindow();
+  drawStatusBar(ColorBlue);
+  Serial.println("tare done");
 }
 
 static void clearQrArea() {
@@ -171,6 +184,13 @@ void setup() {
 }
 
 void loop() {
+  while (Serial.available() > 0) {
+    int c = Serial.read();
+    if (c == 't' || c == 'T') {
+      tryTareNow();
+    }
+  }
+
   static uint32_t lastWifiRetry = 0;
   if (!wifi.isConnected()) {
     uint32_t now = millis();
@@ -182,7 +202,7 @@ void loop() {
   }
 
   if (state == AppState::Weighing) {
-    int32_t raw = hx711->readAverage(5, 200);
+    int32_t raw = hx711->readAverage(3, 120);
     if (raw == INT32_MIN) {
       uint32_t now = millis();
       if (now - lastHx711LogMs > 1000) {
@@ -223,7 +243,7 @@ void loop() {
     } else {
       stableHits = 0;
     }
-    bool stable = stableHits >= 5;
+    bool stable = stableHits >= 2;
     float stableWeight = (float)stableDelta / hx711->scale();
     drawWeight(stable, stable ? stableWeight : w);
 
@@ -234,12 +254,12 @@ void loop() {
     }
 
     uint32_t now = millis();
-    if (now - lastHx711LogMs > 1000) {
+    if (now - lastHx711LogMs > 600) {
       lastHx711LogMs = now;
       Serial.printf("raw=%ld delta=%ld weight=%.3f stable=%d hits=%d range=%ld\n", (long)raw, (long)delta, w, stable ? 1 : 0, stableHits, (long)range);
     }
 
-    delay(200);
+    delay(100);
     return;
   }
 
