@@ -93,7 +93,7 @@ static bool computeStableDelta(int32_t &meanOut, int32_t &rangeOut) {
   if (threshold < 120) threshold = 120;
   if (threshold > 800) threshold = 800;
   if (rangeOut > threshold) return false;
-  if (absMean < 200) return false;
+  if (absMean < 30) return false;
   return true;
 }
 
