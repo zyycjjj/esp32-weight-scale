@@ -44,6 +44,9 @@ keys = [
     "AIW_DEVICE_NAME",
     "AIW_HX711_DOUT_PIN",
     "AIW_HX711_SCK_PIN",
+    "AIW_PRINTER_TX_PIN",
+    "AIW_PRINTER_RX_PIN",
+    "AIW_PRINTER_BAUD",
 ]
 
 defines = []
@@ -53,7 +56,7 @@ for k in keys:
         continue
     if v == "":
         continue
-    if k.endswith("_PIN") and v.isdigit():
+    if (k.endswith("_PIN") or k.endswith("_BAUD")) and v.isdigit():
       defines.append((k, v))
     else:
       defines.append((k, f"\\\"{_escape_c_string(v)}\\\""))

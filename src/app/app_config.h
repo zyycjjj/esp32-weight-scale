@@ -28,6 +28,18 @@
 #define AIW_HX711_SCK_PIN 2
 #endif
 
+#ifndef AIW_PRINTER_TX_PIN
+#define AIW_PRINTER_TX_PIN 41
+#endif
+
+#ifndef AIW_PRINTER_RX_PIN
+#define AIW_PRINTER_RX_PIN 42
+#endif
+
+#ifndef AIW_PRINTER_BAUD
+#define AIW_PRINTER_BAUD 115200
+#endif
+
 namespace aiw::config {
 static const char *WifiSsid = AIW_WIFI_SSID;
 static const char *WifiPassword = AIW_WIFI_PASSWORD;
@@ -36,4 +48,7 @@ static const char *DeviceId = AIW_DEVICE_ID;
 static const char *DeviceName = AIW_DEVICE_NAME;
 static const int Hx711DoutPin = AIW_HX711_DOUT_PIN;
 static const int Hx711SckPin = AIW_HX711_SCK_PIN;
+static const int PrinterTxPin = AIW_PRINTER_TX_PIN;
+static const int PrinterRxPin = AIW_PRINTER_RX_PIN;
+static const int PrinterBaud = AIW_PRINTER_BAUD;
 }

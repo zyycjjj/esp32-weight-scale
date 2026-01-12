@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include <HardwareSerial.h>
+#include <string.h>
 #include <math.h>
 
 #include "app/app_config.h"
@@ -19,6 +21,10 @@ static aiw::Hx711 hx711B({.dout = aiw::config::Hx711SckPin, .sck = aiw::config::
 static aiw::Hx711 *hx711 = &hx711A;
 static aiw::PaymentClient payment(aiw::config::BackendBaseUrl);
 static aiw::QrClient qrClient(aiw::config::BackendBaseUrl);
+static HardwareSerial printerSerial(1);
+static int printerTxPin = aiw::config::PrinterTxPin;
+static int printerRxPin = aiw::config::PrinterRxPin;
+static int printerBaud = aiw::config::PrinterBaud;
 
 static constexpr uint16_t ColorWhite = 0xFFFF;
 static constexpr uint16_t ColorBlack = 0x0000;
@@ -171,6 +177,58 @@ static void clearQrArea() {
   display.endWrite();
 }
 
+static void printerInit() {
+  uint8_t cmd[] = {0x1B, 0x40};
+  printerSerial.write(cmd, sizeof(cmd));
+}
+
+static void printerSelfTest() {
+  printerInit();
+  uint8_t cmd[] = {0x12, 0x54};
+  printerSerial.write(cmd, sizeof(cmd));
+}
+
+static void printerPrintLine(const char *s) {
+  if (!s) return;
+  printerSerial.write((const uint8_t *)s, strlen(s));
+  printerSerial.write((uint8_t)0x0D);
+  printerSerial.write((uint8_t)0x0A);
+}
+
+static void printerPrintLine(const String &s) { printerPrintLine(s.c_str()); }
+
+static void printerFeed(uint8_t lines) {
+  for (uint8_t i = 0; i < lines; ++i) {
+    printerSerial.write((uint8_t)0x0D);
+    printerSerial.write((uint8_t)0x0A);
+  }
+}
+
+static void printerPrintDemo(float weight) {
+  printerInit();
+  printerPrintLine("AI Weight Scale");
+  printerPrintLine("Weight:");
+  printerPrintLine(String(weight, 1));
+  printerFeed(4);
+}
+
+static void printerBegin() {
+  printerSerial.begin(printerBaud, SERIAL_8N1, printerRxPin, printerTxPin);
+  Serial.printf("printer uart tx=%d rx=%d baud=%d\n", printerTxPin, printerRxPin, printerBaud);
+}
+
+static void printerSwapPins() {
+  int tmp = printerTxPin;
+  printerTxPin = printerRxPin;
+  printerRxPin = tmp;
+  printerBegin();
+}
+
+static void printerToggleBaud() {
+  printerBaud = (printerBaud == 115200) ? 9600 : 115200;
+  printerBegin();
+}
+
 void setup() {
   Serial.begin(115200);
   delay(200);
@@ -201,6 +259,7 @@ void setup() {
     }
   }
   hx711->tare(20, 200);
+  printerBegin();
 }
 
 void loop() {
@@ -208,6 +267,27 @@ void loop() {
     int c = Serial.read();
     if (c == 't' || c == 'T') {
       tryTareNow();
+    }
+    if (c == 's' || c == 'S') {
+      Serial.println("printer: selftest");
+      printerSelfTest();
+      printerFeed(2);
+    }
+    if (c == 'p' || c == 'P') {
+      Serial.println("printer: demo");
+      printerPrintDemo(lastShownWeight);
+    }
+    if (c == 'f' || c == 'F') {
+      Serial.println("printer: feed");
+      printerFeed(6);
+    }
+    if (c == 'x' || c == 'X') {
+      Serial.println("printer: swap tx/rx pins");
+      printerSwapPins();
+    }
+    if (c == 'b' || c == 'B') {
+      Serial.println("printer: toggle baud 115200/9600");
+      printerToggleBaud();
     }
   }
 
@@ -320,12 +400,6 @@ void loop() {
       lastStableWeight = shownWeight;
       drawStatusBar(ColorBlue);
       state = AppState::CreatingPayment;
-    }
-
-    uint32_t now = millis();
-    if (now - lastHx711LogMs > 600) {
-      lastHx711LogMs = now;
-      Serial.printf("raw=%ld delta=%ld fdelta=%ld weight=%.3f stable=%d hits=%d dd=%ld th=%ld\n", (long)raw, (long)delta, (long)displayDelta, displayWeight, stable ? 1 : 0, stableHits, (long)diffDisplay, (long)stableThreshold);
     }
 
     delay(100);
