@@ -53,9 +53,16 @@ static constexpr int StateDotY = 22;
 static constexpr int StateDotSize = 16;
 
 static constexpr int HeaderH = 66;
-static constexpr int QrX = 8;
-static constexpr int QrY = HeaderH + 8;
-static constexpr int QrSize = 224;
+static constexpr int QrMargin = 6;
+
+static void qrLayout(int &x, int &y, int &size) {
+  y = HeaderH + QrMargin;
+  int maxH = aiw::DisplaySt7789::Height - y - QrMargin;
+  int maxW = aiw::DisplaySt7789::Width - 2 * QrMargin;
+  size = maxH < maxW ? maxH : maxW;
+  if (size < 0) size = 0;
+  x = (aiw::DisplaySt7789::Width - size) / 2;
+}
 
 static constexpr int StableWindow = 6;
 static constexpr int32_t ZeroSnapDelta = 200;
@@ -245,8 +252,12 @@ static void tryTareNow() {
 }
 
 static void clearQrArea() {
+  int x = 0;
+  int y = 0;
+  int size = 0;
+  qrLayout(x, y, size);
   display.beginWrite();
-  display.fillRect(0, QrY, aiw::DisplaySt7789::Width, aiw::DisplaySt7789::Height - QrY, ColorWhite);
+  display.fillRect(0, y, aiw::DisplaySt7789::Width, aiw::DisplaySt7789::Height - y, ColorWhite);
   display.endWrite();
 }
 
@@ -618,8 +629,12 @@ void loop() {
       return;
     }
     qrMatrix = m;
+    int qx = 0;
+    int qy = 0;
+    int qs = 0;
+    qrLayout(qx, qy, qs);
     display.beginWrite();
-    bool drawn = qrRenderer.drawMatrix(qrMatrix, QrX, QrY, QrSize, ColorBlack, ColorWhite);
+    bool drawn = qrRenderer.drawMatrix(qrMatrix, qx, qy, qs, ColorBlack, ColorWhite);
     display.endWrite();
     Serial.printf("qr draw ok=%d size=%d\n", drawn ? 1 : 0, qrMatrix.size);
     drawStatusBar(ColorBlue);

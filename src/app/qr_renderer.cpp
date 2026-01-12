@@ -25,9 +25,11 @@ bool QrRenderer::getModule(const QrMatrix &m, int x, int y) const {
 
 bool QrRenderer::drawMatrix(const QrMatrix &m, int x, int y, int maxSize, uint16_t fg, uint16_t bg) {
   if (m.size <= 0) return false;
-  int scale = maxSize / m.size;
+  const int border = 4;
+  int effectiveSize = m.size + border * 2;
+  int scale = maxSize / effectiveSize;
   if (scale < 1) return false;
-  int drawSize = m.size * scale;
+  int drawSize = effectiveSize * scale;
 
   display_.fillRect(x, y, drawSize, drawSize, bg);
 
@@ -40,18 +42,17 @@ bool QrRenderer::drawMatrix(const QrMatrix &m, int x, int y, int maxSize, uint16
       } else {
         if (runStart >= 0) {
           int runW = col - runStart;
-          display_.fillRect(x + runStart * scale, y + row * scale, runW * scale, scale, fg);
+          display_.fillRect(x + (runStart + border) * scale, y + (row + border) * scale, runW * scale, scale, fg);
           runStart = -1;
         }
       }
     }
     if (runStart >= 0) {
       int runW = m.size - runStart;
-      display_.fillRect(x + runStart * scale, y + row * scale, runW * scale, scale, fg);
+      display_.fillRect(x + (runStart + border) * scale, y + (row + border) * scale, runW * scale, scale, fg);
     }
   }
   return true;
 }
 
 }  // namespace aiw
-
