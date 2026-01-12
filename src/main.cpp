@@ -25,6 +25,8 @@ static HardwareSerial printerSerial(1);
 static int printerTxPin = aiw::config::PrinterTxPin;
 static int printerRxPin = aiw::config::PrinterRxPin;
 static int printerBaud = aiw::config::PrinterBaud;
+static int printerBaudIndex = 0;
+static int printerPinsIndex = 0;
 
 static constexpr uint16_t ColorWhite = 0xFFFF;
 static constexpr uint16_t ColorBlack = 0x0000;
@@ -217,6 +219,38 @@ static void printerBegin() {
   Serial.printf("printer uart tx=%d rx=%d baud=%d\n", printerTxPin, printerRxPin, printerBaud);
 }
 
+static void printerSelectBaudIndex(int idx) {
+  static const int baudOptions[] = {9600, 19200, 38400, 57600, 115200, 230400};
+  const int n = (int)(sizeof(baudOptions) / sizeof(baudOptions[0]));
+  if (idx < 0) idx = 0;
+  if (idx >= n) idx = 0;
+  printerBaudIndex = idx;
+  printerBaud = baudOptions[printerBaudIndex];
+  printerBegin();
+}
+
+static void printerSelectPinsIndex(int idx) {
+  struct Pins {
+    int tx;
+    int rx;
+  };
+  static const Pins pinsOptions[] = {
+      {.tx = 41, .rx = 42},
+      {.tx = 42, .rx = 41},
+      {.tx = 43, .rx = 44},
+      {.tx = 44, .rx = 43},
+      {.tx = 10, .rx = 13},
+      {.tx = 13, .rx = 10},
+  };
+  const int n = (int)(sizeof(pinsOptions) / sizeof(pinsOptions[0]));
+  if (idx < 0) idx = 0;
+  if (idx >= n) idx = 0;
+  printerPinsIndex = idx;
+  printerTxPin = pinsOptions[printerPinsIndex].tx;
+  printerRxPin = pinsOptions[printerPinsIndex].rx;
+  printerBegin();
+}
+
 static void printerSwapPins() {
   int tmp = printerTxPin;
   printerTxPin = printerRxPin;
@@ -224,10 +258,8 @@ static void printerSwapPins() {
   printerBegin();
 }
 
-static void printerToggleBaud() {
-  printerBaud = (printerBaud == 115200) ? 9600 : 115200;
-  printerBegin();
-}
+static void printerNextBaud() { printerSelectBaudIndex(printerBaudIndex + 1); }
+static void printerNextPins() { printerSelectPinsIndex(printerPinsIndex + 1); }
 
 void setup() {
   Serial.begin(115200);
@@ -259,7 +291,8 @@ void setup() {
     }
   }
   hx711->tare(20, 200);
-  printerBegin();
+  printerSelectPinsIndex(0);
+  printerSelectBaudIndex(0);
 }
 
 void loop() {
@@ -286,9 +319,27 @@ void loop() {
       printerSwapPins();
     }
     if (c == 'b' || c == 'B') {
-      Serial.println("printer: toggle baud 115200/9600");
-      printerToggleBaud();
+      Serial.println("printer: next baud");
+      printerNextBaud();
     }
+    if (c == 'u' || c == 'U') {
+      Serial.println("printer: next pin pair");
+      printerNextPins();
+    }
+  }
+
+  if (printerSerial.available() > 0) {
+    Serial.print("printer rx: ");
+    int n = 0;
+    while (printerSerial.available() > 0 && n < 32) {
+      uint8_t b = (uint8_t)printerSerial.read();
+      char buf[4];
+      snprintf(buf, sizeof(buf), "%02X", (unsigned)b);
+      Serial.print(buf);
+      n++;
+      if (printerSerial.available() > 0 && n < 32) Serial.print(" ");
+    }
+    Serial.println();
   }
 
   static uint32_t lastWifiRetry = 0;

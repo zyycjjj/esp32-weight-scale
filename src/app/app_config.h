@@ -37,7 +37,7 @@
 #endif
 
 #ifndef AIW_PRINTER_BAUD
-#define AIW_PRINTER_BAUD 115200
+#define AIW_PRINTER_BAUD 9600
 #endif
 
 namespace aiw::config {
