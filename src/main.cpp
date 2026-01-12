@@ -11,6 +11,7 @@
 #include "app/qr_renderer.h"
 #include "app/seven_seg.h"
 #include "app/wifi_manager.h"
+#include "app/ai_client.h"
 
 static aiw::DisplaySt7789 display({.mosi = 6, .sclk = 7, .cs = 5, .dc = 4, .rst = 48, .blBox = 45, .blBox3 = 47});
 static aiw::SevenSeg sevenSeg(display);
@@ -19,8 +20,10 @@ static aiw::WifiManager wifi;
 static aiw::Hx711 hx711A({.dout = aiw::config::Hx711DoutPin, .sck = aiw::config::Hx711SckPin});
 static aiw::Hx711 hx711B({.dout = aiw::config::Hx711SckPin, .sck = aiw::config::Hx711DoutPin});
 static aiw::Hx711 *hx711 = &hx711A;
+
 static aiw::PaymentClient payment(aiw::config::BackendBaseUrl);
 static aiw::QrClient qrClient(aiw::config::BackendBaseUrl);
+static aiw::AiClient aiClient(aiw::config::BackendBaseUrl);
 static HardwareSerial printerSerial(1);
 static int printerTxPin = aiw::config::PrinterTxPin;
 static int printerRxPin = aiw::config::PrinterRxPin;
@@ -113,6 +116,7 @@ static float lastStableWeight = 0.0f;
 static aiw::PaymentCreateResponse payCreateRes;
 static aiw::QrMatrix qrMatrix;
 static uint32_t lastPollMs = 0;
+static bool paidHandled = false;
 static uint32_t lastHx711LogMs = 0;
 static uint32_t lastTareMs = 0;
 
@@ -295,6 +299,22 @@ static void printerPrintDemo(float weight) {
   printerPrintLine("AI Weight Scale");
   printerPrintLine("Weight:");
   printerPrintLine(String(weight, 1));
+  printerFeed(4);
+}
+
+static void printerPrintResult(float weightKg, float heightCm, float bmi, const String &category) {
+  printerInit();
+  printerPrintLine("AI Weight Scale");
+  printerPrintLine("Height(cm):");
+  printerPrintLine(String(heightCm, 0));
+  printerPrintLine("Weight(kg):");
+  printerPrintLine(String(weightKg, 1));
+  printerPrintLine("BMI:");
+  printerPrintLine(String(bmi, 1));
+  if (category.length()) {
+    printerPrintLine("Category:");
+    printerPrintLine(category);
+  }
   printerFeed(4);
 }
 
@@ -641,6 +661,7 @@ void loop() {
     Serial.printf("qr draw ok=%d size=%d\n", drawn ? 1 : 0, qrMatrix.size);
     drawStatusBar(ColorBlue);
     lastPollMs = 0;
+    paidHandled = false;
     setState(AppState::WaitingPayment);
     return;
   }
@@ -671,7 +692,22 @@ void loop() {
   }
 
   if (state == AppState::Paid) {
-    delay(500);
+    if (!paidHandled) {
+      paidHandled = true;
+      aiw::AiWithTtsResult r;
+      bool ok = aiClient.getCommentWithTts(lastStableWeight, lastInputHeightCm, r);
+      Serial.printf("ai ok=%d bmi=%.1f cat=%s audio=%s\n", ok ? 1 : 0, r.bmi, r.category.c_str(), r.audioUrl.c_str());
+      if (ok) {
+        printerPrintResult(lastStableWeight, lastInputHeightCm, r.bmi, r.category);
+      } else {
+        printerPrintResult(lastStableWeight, lastInputHeightCm, 0.0f, "");
+      }
+      drawStatusBar(ok ? ColorGreen : ColorRed);
+    }
+    delay(3000);
+    drawUiFrame();
+    drawHeightPicker();
+    setState(AppState::InputHeight);
     return;
   }
 }
