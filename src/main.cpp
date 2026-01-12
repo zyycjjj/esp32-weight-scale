@@ -38,6 +38,7 @@ static constexpr uint16_t ColorBlack = 0x0000;
 static constexpr uint16_t ColorRed = 0xF800;
 static constexpr uint16_t ColorBlue = 0x001F;
 static constexpr uint16_t ColorGreen = 0x07E0;
+static constexpr uint16_t ColorGray = 0xC618;
 
 static constexpr int WeightX = 10;
 static constexpr int WeightY = 10;
@@ -47,6 +48,9 @@ static constexpr int WeightH = 50;
 static constexpr int WifiDotX = 300;
 static constexpr int WifiDotY = 0;
 static constexpr int WifiDotSize = 20;
+static constexpr int StateDotX = 300;
+static constexpr int StateDotY = 22;
+static constexpr int StateDotSize = 16;
 
 static constexpr int QrX = 10;
 static constexpr int QrY = 70;
@@ -154,9 +158,8 @@ static bool computeStableDelta(int32_t &meanOut, int32_t &rangeOut) {
 static void drawUiFrame() {
   display.beginWrite();
   display.clear(ColorWhite);
-  display.fillRect(0, 70, aiw::DisplaySt7789::Width, 60, ColorRed);
-  display.fillRect(0, 130, aiw::DisplaySt7789::Width, 60, ColorBlue);
-  display.drawBorder(ColorWhite, 2);
+  display.drawBorder(ColorBlack, 2);
+  display.fillRect(0, 66, aiw::DisplaySt7789::Width, 1, ColorGray);
   display.endWrite();
 }
 
@@ -168,17 +171,21 @@ static void drawWifiStatus() {
 }
 
 static void drawWeight(bool stable, float weight) {
-  char buf[32];
-  snprintf(buf, sizeof(buf), "%.1f", weight);
+  char wbuf[32];
+  char hbuf[8];
+  snprintf(wbuf, sizeof(wbuf), "%.1f", weight);
+  snprintf(hbuf, sizeof(hbuf), "%d", (int)lroundf(lastInputHeightCm));
   display.beginWrite();
-  sevenSeg.clearRect(WeightX, WeightY, WeightW, WeightH, ColorWhite);
-  sevenSeg.drawText(WeightX + 6, WeightY + 6, buf, 4, ColorBlack, ColorWhite);
+  sevenSeg.clearRect(4, 0, aiw::DisplaySt7789::Width - 4, 66, ColorWhite);
+  sevenSeg.drawText(10, 18, hbuf, 2, ColorBlack, ColorWhite);
+  sevenSeg.drawText(95, 10, wbuf, 4, ColorBlack, ColorWhite);
   display.endWrite();
+  drawWifiStatus();
 }
 
 static void drawStatusBar(uint16_t color) {
   display.beginWrite();
-  display.fillRect(0, 190, aiw::DisplaySt7789::Width, 50, color);
+  display.fillRect(StateDotX, StateDotY, StateDotSize, StateDotSize, color);
   display.endWrite();
 }
 
@@ -191,12 +198,15 @@ static void drawHeightPicker() {
   snprintf(right, sizeof(right), "%d", currentHeightCm + 1);
 
   display.beginWrite();
-  sevenSeg.clearRect(0, 0, aiw::DisplaySt7789::Width, 70, ColorWhite);
-  sevenSeg.drawText(20, 12, left, 2, ColorBlue, ColorWhite);
-  sevenSeg.drawText(115, 6, mid, 4, ColorBlack, ColorWhite);
-  sevenSeg.drawText(250, 12, right, 2, ColorBlue, ColorWhite);
-  display.fillRect(0, 190, aiw::DisplaySt7789::Width, 50, ColorRed);
+  display.clear(ColorWhite);
+  display.drawBorder(ColorBlack, 2);
+  display.fillRect(0, 66, aiw::DisplaySt7789::Width, 1, ColorGray);
+  sevenSeg.drawText(25, 20, left, 2, ColorGray, ColorWhite);
+  sevenSeg.drawText(110, 10, mid, 4, ColorBlack, ColorWhite);
+  sevenSeg.drawText(245, 20, right, 2, ColorGray, ColorWhite);
   display.endWrite();
+  drawWifiStatus();
+  drawStatusBar(ColorBlue);
 }
 
 static void bootButtonUpdate(bool &shortPress, bool &longPress) {
