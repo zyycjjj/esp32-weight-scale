@@ -52,9 +52,10 @@ static constexpr int StateDotX = 300;
 static constexpr int StateDotY = 22;
 static constexpr int StateDotSize = 16;
 
-static constexpr int QrX = 10;
-static constexpr int QrY = 70;
-static constexpr int QrSize = 220;
+static constexpr int HeaderH = 66;
+static constexpr int QrX = 8;
+static constexpr int QrY = HeaderH + 8;
+static constexpr int QrSize = 224;
 
 static constexpr int StableWindow = 6;
 static constexpr int32_t ZeroSnapDelta = 200;
@@ -245,7 +246,7 @@ static void tryTareNow() {
 
 static void clearQrArea() {
   display.beginWrite();
-  display.fillRect(QrX, QrY, QrSize, QrSize, ColorWhite);
+  display.fillRect(0, QrY, aiw::DisplaySt7789::Width, aiw::DisplaySt7789::Height - QrY, ColorWhite);
   display.endWrite();
 }
 
