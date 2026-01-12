@@ -78,12 +78,21 @@ bool PaymentClient::create(const PaymentCreateRequest &req, PaymentCreateRespons
     http.end();
   }
 
-  if (code != 200) return false;
+  if (code < 200 || code >= 300) {
+    Serial.printf("pay create http=%d\n", code);
+    return false;
+  }
 
   String codeUrl;
   String outTradeNo;
-  if (!extractJsonStringField(payload, "code_url", codeUrl)) return false;
-  if (!extractJsonStringField(payload, "out_trade_no", outTradeNo)) return false;
+  if (!extractJsonStringField(payload, "code_url", codeUrl)) {
+    Serial.println("pay create no code_url");
+    return false;
+  }
+  if (!extractJsonStringField(payload, "out_trade_no", outTradeNo)) {
+    Serial.println("pay create no out_trade_no");
+    return false;
+  }
   res.codeUrl = codeUrl;
   res.outTradeNo = outTradeNo;
   return true;
@@ -111,7 +120,10 @@ bool PaymentClient::query(const char *outTradeNo, PaymentQueryResponse &res) {
     http.end();
   }
 
-  if (code != 200) return false;
+  if (code < 200 || code >= 300) {
+    Serial.printf("pay query http=%d\n", code);
+    return false;
+  }
 
   bool success = false;
   String tradeState;
