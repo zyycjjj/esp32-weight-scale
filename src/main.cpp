@@ -167,7 +167,8 @@ static void drawUiFrame() {
   display.beginWrite();
   display.clear(ColorWhite);
   display.drawBorder(ColorBlack, 2);
-  display.fillRect(0, 66, aiw::DisplaySt7789::Width, 1, ColorGray);
+  display.fillRect(0, HeaderH, aiw::DisplaySt7789::Width, 1, ColorGray);
+  display.fillRect(80, 6, 1, HeaderH - 12, ColorGray);
   display.endWrite();
 }
 
@@ -184,9 +185,10 @@ static void drawWeight(bool stable, float weight) {
   snprintf(wbuf, sizeof(wbuf), "%.1f", weight);
   snprintf(hbuf, sizeof(hbuf), "%d", (int)lroundf(lastInputHeightCm));
   display.beginWrite();
-  sevenSeg.clearRect(4, 0, aiw::DisplaySt7789::Width - 4, 66, ColorWhite);
-  sevenSeg.drawText(10, 18, hbuf, 2, ColorBlack, ColorWhite);
-  sevenSeg.drawText(95, 10, wbuf, 4, ColorBlack, ColorWhite);
+  sevenSeg.clearRect(4, 0, aiw::DisplaySt7789::Width - 4, HeaderH, ColorWhite);
+  display.fillRect(80, 6, 1, HeaderH - 12, ColorGray);
+  sevenSeg.drawText(10, 10, hbuf, 3, ColorGray, ColorWhite);
+  sevenSeg.drawText(100, 6, wbuf, 4, ColorBlack, ColorWhite);
   display.endWrite();
   drawWifiStatus();
 }
@@ -209,9 +211,9 @@ static void drawHeightPicker() {
   display.clear(ColorWhite);
   display.drawBorder(ColorBlack, 2);
   display.fillRect(0, 66, aiw::DisplaySt7789::Width, 1, ColorGray);
-  sevenSeg.drawText(25, 20, left, 2, ColorGray, ColorWhite);
+  sevenSeg.drawText(30, 22, left, 2, ColorGray, ColorWhite);
   sevenSeg.drawText(110, 10, mid, 4, ColorBlack, ColorWhite);
-  sevenSeg.drawText(245, 20, right, 2, ColorGray, ColorWhite);
+  sevenSeg.drawText(240, 22, right, 2, ColorGray, ColorWhite);
   display.endWrite();
   drawWifiStatus();
   drawStatusBar(ColorBlue);
