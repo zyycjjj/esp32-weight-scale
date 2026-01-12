@@ -6,6 +6,8 @@
 #include "app/app_config.h"
 #include "app/display_st7789.h"
 #include "app/hx711.h"
+#include "app/audio_player.h"
+#include "app/gacha_controller.h"
 #include "app/payment_client.h"
 #include "app/qr_client.h"
 #include "app/qr_renderer.h"
@@ -24,6 +26,8 @@ static aiw::Hx711 *hx711 = &hx711A;
 static aiw::PaymentClient payment(aiw::config::BackendBaseUrl);
 static aiw::QrClient qrClient(aiw::config::BackendBaseUrl);
 static aiw::AiClient aiClient(aiw::config::BackendBaseUrl);
+static aiw::AudioPlayer audioPlayer;
+static aiw::GachaController gacha;
 static HardwareSerial printerSerial(1);
 static int printerTxPin = aiw::config::PrinterTxPin;
 static int printerRxPin = aiw::config::PrinterRxPin;
@@ -117,6 +121,9 @@ static aiw::PaymentCreateResponse payCreateRes;
 static aiw::QrMatrix qrMatrix;
 static uint32_t lastPollMs = 0;
 static bool paidHandled = false;
+static uint32_t rewardStartMs = 0;
+static aiw::AiWithTtsResult rewardAi;
+static bool rewardAiOk = false;
 static uint32_t lastHx711LogMs = 0;
 static uint32_t lastTareMs = 0;
 
@@ -302,7 +309,7 @@ static void printerPrintDemo(float weight) {
   printerFeed(4);
 }
 
-static void printerPrintResult(float weightKg, float heightCm, float bmi, const String &category) {
+static void printerPrintResult(float weightKg, float heightCm, float bmi, const String &category, const String &comment, const String &tip) {
   printerInit();
   printerPrintLine("AI Weight Scale");
   printerPrintLine("Height(cm):");
@@ -314,6 +321,14 @@ static void printerPrintResult(float weightKg, float heightCm, float bmi, const 
   if (category.length()) {
     printerPrintLine("Category:");
     printerPrintLine(category);
+  }
+  if (comment.length()) {
+    printerPrintLine("Comment:");
+    printerPrintLine(comment);
+  }
+  if (tip.length()) {
+    printerPrintLine("Tip:");
+    printerPrintLine(tip);
   }
   printerFeed(4);
 }
@@ -379,7 +394,12 @@ void setup() {
   bool ok = wifi.connect(aiw::config::WifiSsid, aiw::config::WifiPassword, 15000);
   Serial.printf("wifi=%s ip=%s\n", ok ? "connected" : "timeout", wifi.ip().c_str());
   Serial.printf("backend=%s\n", aiw::config::BackendBaseUrl);
+  Serial.printf("gacha pin=%d activeHigh=%d pulseMs=%lu\n", aiw::config::GachaPin, aiw::config::GachaActiveHigh ? 1 : 0, (unsigned long)aiw::config::GachaPulseMs);
+  Serial.printf("audio enabled=%d bclk=%d lrck=%d dout=%d vol=%d\n", aiw::config::AudioEnabled ? 1 : 0, aiw::config::I2sBclkPin, aiw::config::I2sLrckPin, aiw::config::I2sDoutPin, aiw::config::AudioVolume);
   drawWifiStatus();
+
+  gacha.begin(aiw::config::GachaPin, aiw::config::GachaActiveHigh, aiw::config::GachaPulseMs);
+  audioPlayer.begin(aiw::config::AudioEnabled, aiw::config::I2sBclkPin, aiw::config::I2sLrckPin, aiw::config::I2sDoutPin, aiw::config::AudioVolume);
 
   hx711A.begin();
   int32_t rawA = hx711A.readRaw(500);
@@ -478,6 +498,8 @@ void loop() {
     }
     Serial.println();
   }
+
+  gacha.loop();
 
   if (state == AppState::InputHeight) {
     bool shortPress = false;
@@ -693,19 +715,25 @@ void loop() {
   }
 
   if (state == AppState::Paid) {
-    if (!paidHandled) {
-      paidHandled = true;
-      aiw::AiWithTtsResult r;
-      bool ok = aiClient.getCommentWithTts(lastStableWeight, lastInputHeightCm, r);
-      Serial.printf("ai ok=%d bmi=%.1f cat=%s audio=%s\n", ok ? 1 : 0, r.bmi, r.category.c_str(), r.audioUrl.c_str());
-      if (ok) {
-        printerPrintResult(lastStableWeight, lastInputHeightCm, r.bmi, r.category);
-      } else {
-        printerPrintResult(lastStableWeight, lastInputHeightCm, 0.0f, "");
+    if (paidHandled) return;
+    paidHandled = true;
+    rewardStartMs = millis();
+    rewardAi = aiw::AiWithTtsResult{};
+    rewardAiOk = aiClient.getCommentWithTts(lastStableWeight, lastInputHeightCm, rewardAi);
+    Serial.printf("ai ok=%d bmi=%.1f cat=%s audio=%s\n", rewardAiOk ? 1 : 0, rewardAi.bmi, rewardAi.category.c_str(), rewardAi.audioUrl.c_str());
+    if (rewardAiOk) {
+      printerPrintResult(lastStableWeight, lastInputHeightCm, rewardAi.bmi, rewardAi.category, rewardAi.comment, rewardAi.tip);
+      if (rewardAi.audioUrl.length()) {
+        audioPlayer.playWav(aiw::config::BackendBaseUrl, rewardAi.audioUrl, &gacha);
       }
-      drawStatusBar(ok ? ColorGreen : ColorRed);
+    } else {
+      printerPrintResult(lastStableWeight, lastInputHeightCm, 0.0f, "", "", "");
     }
-    delay(3000);
+    gacha.trigger();
+    while (gacha.isActive() && (millis() - rewardStartMs < 5000)) {
+      gacha.loop();
+      delay(10);
+    }
     drawUiFrame();
     drawHeightPicker();
     setState(AppState::InputHeight);
