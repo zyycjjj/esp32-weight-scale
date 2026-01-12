@@ -27,6 +27,11 @@ static int printerRxPin = aiw::config::PrinterRxPin;
 static int printerBaud = aiw::config::PrinterBaud;
 static int printerBaudIndex = 0;
 static int printerPinsIndex = 0;
+static constexpr int BootPin = 0;
+static int currentHeightCm = 170;
+static float lastInputHeightCm = 170.0f;
+static bool bootPrevPressed = false;
+static uint32_t bootPressStartMs = 0;
 
 static constexpr uint16_t ColorWhite = 0xFFFF;
 static constexpr uint16_t ColorBlack = 0x0000;
@@ -83,14 +88,15 @@ static float quantize(float v, float step) {
 }
 
 enum class AppState : uint8_t {
-  Weighing = 0,
-  CreatingPayment = 1,
-  FetchingQr = 2,
-  WaitingPayment = 3,
-  Paid = 4,
+  InputHeight = 0,
+  Weighing = 1,
+  CreatingPayment = 2,
+  FetchingQr = 3,
+  WaitingPayment = 4,
+  Paid = 5,
 };
 
-static AppState state = AppState::Weighing;
+static AppState state = AppState::InputHeight;
 static float lastStableWeight = 0.0f;
 static aiw::PaymentCreateResponse payCreateRes;
 static aiw::QrMatrix qrMatrix;
@@ -156,6 +162,42 @@ static void drawStatusBar(uint16_t color) {
   display.beginWrite();
   display.fillRect(0, 190, aiw::DisplaySt7789::Width, 50, color);
   display.endWrite();
+}
+
+static void drawHeightPicker() {
+  char mid[8];
+  char left[8];
+  char right[8];
+  snprintf(mid, sizeof(mid), "%d", currentHeightCm);
+  snprintf(left, sizeof(left), "%d", currentHeightCm - 1);
+  snprintf(right, sizeof(right), "%d", currentHeightCm + 1);
+
+  display.beginWrite();
+  sevenSeg.clearRect(0, 0, aiw::DisplaySt7789::Width, 70, ColorWhite);
+  sevenSeg.drawText(20, 12, left, 2, ColorBlue, ColorWhite);
+  sevenSeg.drawText(115, 6, mid, 4, ColorBlack, ColorWhite);
+  sevenSeg.drawText(250, 12, right, 2, ColorBlue, ColorWhite);
+  display.fillRect(0, 190, aiw::DisplaySt7789::Width, 50, ColorRed);
+  display.endWrite();
+}
+
+static void bootButtonUpdate(bool &shortPress, bool &longPress) {
+  shortPress = false;
+  longPress = false;
+  bool pressed = digitalRead(BootPin) == LOW;
+  uint32_t now = millis();
+  if (pressed && !bootPrevPressed) {
+    bootPressStartMs = now;
+  }
+  if (!pressed && bootPrevPressed) {
+    uint32_t dur = now - bootPressStartMs;
+    if (dur >= 800) {
+      longPress = true;
+    } else if (dur >= 40) {
+      shortPress = true;
+    }
+  }
+  bootPrevPressed = pressed;
 }
 
 static void tryTareNow() {
@@ -265,8 +307,11 @@ void setup() {
   Serial.begin(115200);
   delay(200);
 
+  pinMode(BootPin, INPUT_PULLUP);
+
   display.begin();
   drawUiFrame();
+  drawHeightPicker();
 
   wifi.begin();
   bool ok = wifi.connect(aiw::config::WifiSsid, aiw::config::WifiPassword, 15000);
@@ -363,6 +408,25 @@ void loop() {
       if (printerSerial.available() > 0 && n < 32) Serial.print(" ");
     }
     Serial.println();
+  }
+
+  if (state == AppState::InputHeight) {
+    bool shortPress = false;
+    bool longPress = false;
+    bootButtonUpdate(shortPress, longPress);
+    if (shortPress) {
+      currentHeightCm++;
+      if (currentHeightCm > 220) currentHeightCm = 120;
+      drawHeightPicker();
+    }
+    if (longPress) {
+      lastInputHeightCm = (float)currentHeightCm;
+      resetDeltaWindow();
+      drawStatusBar(ColorBlue);
+      state = AppState::Weighing;
+    }
+    delay(10);
+    return;
   }
 
   static uint32_t lastWifiRetry = 0;
