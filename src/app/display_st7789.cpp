@@ -120,11 +120,10 @@ void DisplaySt7789::initN_C0() {
   cmd(0x3A);
   data8(0x55);
   cmd(0x36);
-  data8(0xC0);
-  cmd(0x21);
+  data8(0x00);
+  cmd(0x20);
   cmd(0x29);
   delay(20);
 }
 
 }  // namespace aiw
-
