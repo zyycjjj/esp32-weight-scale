@@ -378,6 +378,7 @@ void setup() {
   wifi.begin();
   bool ok = wifi.connect(aiw::config::WifiSsid, aiw::config::WifiPassword, 15000);
   Serial.printf("wifi=%s ip=%s\n", ok ? "connected" : "timeout", wifi.ip().c_str());
+  Serial.printf("backend=%s\n", aiw::config::BackendBaseUrl);
   drawWifiStatus();
 
   hx711A.begin();

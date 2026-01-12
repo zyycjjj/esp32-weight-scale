@@ -63,7 +63,10 @@ bool PaymentClient::create(const PaymentCreateRequest &req, PaymentCreateRespons
     WiFiClientSecure client;
     client.setInsecure();
     HTTPClient http;
-    if (!http.begin(client, url)) return false;
+    if (!http.begin(client, url)) {
+      Serial.printf("pay create begin failed url=%s\n", url.c_str());
+      return false;
+    }
     http.addHeader("Content-Type", "application/json");
     code = http.POST(body);
     if (code > 0) payload = http.getString();
@@ -71,7 +74,10 @@ bool PaymentClient::create(const PaymentCreateRequest &req, PaymentCreateRespons
   } else {
     WiFiClient client;
     HTTPClient http;
-    if (!http.begin(client, url)) return false;
+    if (!http.begin(client, url)) {
+      Serial.printf("pay create begin failed url=%s\n", url.c_str());
+      return false;
+    }
     http.addHeader("Content-Type", "application/json");
     code = http.POST(body);
     if (code > 0) payload = http.getString();
@@ -80,6 +86,9 @@ bool PaymentClient::create(const PaymentCreateRequest &req, PaymentCreateRespons
 
   if (code < 200 || code >= 300) {
     Serial.printf("pay create http=%d\n", code);
+    if (code <= 0) {
+      Serial.printf("pay create error=%s\n", HTTPClient::errorToString(code).c_str());
+    }
     if (payload.length()) {
       Serial.printf("pay create payload=%s\n", payload.substring(0, 200).c_str());
     }
