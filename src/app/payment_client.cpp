@@ -80,6 +80,9 @@ bool PaymentClient::create(const PaymentCreateRequest &req, PaymentCreateRespons
 
   if (code < 200 || code >= 300) {
     Serial.printf("pay create http=%d\n", code);
+    if (payload.length()) {
+      Serial.printf("pay create payload=%s\n", payload.substring(0, 200).c_str());
+    }
     return false;
   }
 
@@ -87,10 +90,22 @@ bool PaymentClient::create(const PaymentCreateRequest &req, PaymentCreateRespons
   String outTradeNo;
   if (!extractJsonStringField(payload, "code_url", codeUrl)) {
     Serial.println("pay create no code_url");
+    String msg;
+    if (extractJsonStringField(payload, "message", msg)) {
+      Serial.printf("pay create message=%s\n", msg.c_str());
+    } else {
+      Serial.printf("pay create payload=%s\n", payload.substring(0, 200).c_str());
+    }
     return false;
   }
   if (!extractJsonStringField(payload, "out_trade_no", outTradeNo)) {
     Serial.println("pay create no out_trade_no");
+    String msg;
+    if (extractJsonStringField(payload, "message", msg)) {
+      Serial.printf("pay create message=%s\n", msg.c_str());
+    } else {
+      Serial.printf("pay create payload=%s\n", payload.substring(0, 200).c_str());
+    }
     return false;
   }
   res.codeUrl = codeUrl;
