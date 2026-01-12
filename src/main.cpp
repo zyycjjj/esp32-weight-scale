@@ -104,6 +104,24 @@ static uint32_t lastPollMs = 0;
 static uint32_t lastHx711LogMs = 0;
 static uint32_t lastTareMs = 0;
 
+static const char *stateName(AppState s) {
+  switch (s) {
+    case AppState::InputHeight: return "InputHeight";
+    case AppState::Weighing: return "Weighing";
+    case AppState::CreatingPayment: return "CreatingPayment";
+    case AppState::FetchingQr: return "FetchingQr";
+    case AppState::WaitingPayment: return "WaitingPayment";
+    case AppState::Paid: return "Paid";
+    default: return "?";
+  }
+}
+
+static void setState(AppState s) {
+  if (state == s) return;
+  Serial.printf("state %s -> %s\n", stateName(state), stateName(s));
+  state = s;
+}
+
 static void pushDelta(int32_t d) {
   deltaWindow[weightWindowIndex] = d;
   weightWindowIndex = (weightWindowIndex + 1) % StableWindow;
@@ -394,6 +412,12 @@ void loop() {
       Serial.println("printer: next pin pair");
       printerNextPins();
     }
+    if (c == 'q' || c == 'Q') {
+      Serial.printf("force pay: weight=%.2f height=%d\n", lastShownWeight, currentHeightCm);
+      lastStableWeight = lastShownWeight;
+      drawStatusBar(ColorBlue);
+      setState(AppState::CreatingPayment);
+    }
   }
 
   if (printerSerial.available() > 0) {
@@ -423,7 +447,7 @@ void loop() {
       lastInputHeightCm = (float)currentHeightCm;
       resetDeltaWindow();
       drawStatusBar(ColorBlue);
-      state = AppState::Weighing;
+      setState(AppState::Weighing);
     }
     delay(10);
     return;
@@ -537,7 +561,8 @@ void loop() {
       }
       lastStableWeight = shownWeight;
       drawStatusBar(ColorBlue);
-      state = AppState::CreatingPayment;
+      Serial.printf("trigger pay: weight=%.2f height=%.0f\n", lastStableWeight, lastInputHeightCm);
+      setState(AppState::CreatingPayment);
     }
 
     delay(100);
@@ -545,6 +570,7 @@ void loop() {
   }
 
   if (state == AppState::CreatingPayment) {
+    Serial.printf("pay create: weight=%.2f height=%.0f\n", lastStableWeight, lastInputHeightCm);
     aiw::PaymentCreateRequest req{
       .amount = 0.01f,
       .description = "AI Weight Scale",
@@ -555,35 +581,39 @@ void loop() {
     aiw::PaymentCreateResponse res;
     bool ok = payment.create(req, res);
     if (!ok) {
+      Serial.println("pay create failed");
       drawStatusBar(ColorRed);
       delay(2000);
-      state = AppState::Weighing;
+      setState(AppState::Weighing);
       return;
     }
 
     payCreateRes = res;
     Serial.printf("pay created out_trade_no=%s\n", payCreateRes.outTradeNo.c_str());
-    state = AppState::FetchingQr;
+    setState(AppState::FetchingQr);
     return;
   }
 
   if (state == AppState::FetchingQr) {
+    Serial.println("qr fetch matrix");
     clearQrArea();
     aiw::QrMatrix m;
     bool ok = qrClient.fetchMatrixText(payCreateRes.codeUrl.c_str(), m);
     if (!ok) {
+      Serial.println("qr fetch failed");
       drawStatusBar(ColorRed);
       delay(2000);
-      state = AppState::Weighing;
+      setState(AppState::Weighing);
       return;
     }
     qrMatrix = m;
     display.beginWrite();
-    qrRenderer.drawMatrix(qrMatrix, QrX, QrY, QrSize, ColorBlack, ColorWhite);
+    bool drawn = qrRenderer.drawMatrix(qrMatrix, QrX, QrY, QrSize, ColorBlack, ColorWhite);
     display.endWrite();
+    Serial.printf("qr draw ok=%d size=%d\n", drawn ? 1 : 0, qrMatrix.size);
     drawStatusBar(ColorBlue);
     lastPollMs = 0;
-    state = AppState::WaitingPayment;
+    setState(AppState::WaitingPayment);
     return;
   }
 
