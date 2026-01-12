@@ -28,6 +28,10 @@
 #define AIW_HX711_SCK_PIN 2
 #endif
 
+#ifndef AIW_HX711_SCALE
+#define AIW_HX711_SCALE 1000.0f
+#endif
+
 #ifndef AIW_PRINTER_TX_PIN
 #define AIW_PRINTER_TX_PIN 41
 #endif
@@ -48,6 +52,7 @@ static const char *DeviceId = AIW_DEVICE_ID;
 static const char *DeviceName = AIW_DEVICE_NAME;
 static const int Hx711DoutPin = AIW_HX711_DOUT_PIN;
 static const int Hx711SckPin = AIW_HX711_SCK_PIN;
+static constexpr float Hx711Scale = AIW_HX711_SCALE;
 static const int PrinterTxPin = AIW_PRINTER_TX_PIN;
 static const int PrinterRxPin = AIW_PRINTER_RX_PIN;
 static const int PrinterBaud = AIW_PRINTER_BAUD;

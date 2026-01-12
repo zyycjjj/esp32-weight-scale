@@ -291,6 +291,7 @@ void setup() {
     }
   }
   hx711->tare(20, 200);
+  hx711->setScale(aiw::config::Hx711Scale);
   printerSelectPinsIndex(0);
   printerSelectBaudIndex(0);
 }
@@ -300,6 +301,28 @@ void loop() {
     int c = Serial.read();
     if (c == 't' || c == 'T') {
       tryTareNow();
+    }
+    if (c == 'c') {
+      Serial.println("calibrate 500g: place 500g after tare, wait, then press c again");
+      static bool waiting = false;
+      static int32_t tareOffset = 0;
+      if (!waiting) {
+        hx711->tare(30, 500);
+        tareOffset = hx711->offset();
+        waiting = true;
+      } else {
+        int32_t raw = hx711->readAverage(10, 200);
+        if (raw != INT32_MIN) {
+          int32_t delta = raw - tareOffset;
+          float scale = (float)delta / 0.5f;
+          hx711->setScale(scale);
+          Serial.printf("calibrated: raw=%ld offset=%ld delta=%ld scale=%.3f counts/kg\n",
+                        (long)raw, (long)tareOffset, (long)delta, scale);
+        } else {
+          Serial.println("calibrate failed: hx711 timeout");
+        }
+        waiting = false;
+      }
     }
     if (c == 's' || c == 'S') {
       Serial.println("printer: selftest");

@@ -44,6 +44,7 @@ keys = [
     "AIW_DEVICE_NAME",
     "AIW_HX711_DOUT_PIN",
     "AIW_HX711_SCK_PIN",
+    "AIW_HX711_SCALE",
     "AIW_PRINTER_TX_PIN",
     "AIW_PRINTER_RX_PIN",
     "AIW_PRINTER_BAUD",
@@ -58,6 +59,12 @@ for k in keys:
         continue
     if (k.endswith("_PIN") or k.endswith("_BAUD")) and v.isdigit():
       defines.append((k, v))
+    elif k.endswith("_SCALE"):
+      try:
+        float(v)
+        defines.append((k, v))
+      except ValueError:
+        continue
     else:
       defines.append((k, f"\\\"{_escape_c_string(v)}\\\""))
 
