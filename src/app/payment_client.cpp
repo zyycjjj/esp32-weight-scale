@@ -137,12 +137,19 @@ bool PaymentClient::query(const char *outTradeNo, PaymentQueryResponse &res) {
 
   if (code < 200 || code >= 300) {
     Serial.printf("pay query http=%d\n", code);
+    if (payload.length()) {
+      Serial.printf("pay query payload=%s\n", payload.substring(0, 200).c_str());
+    }
     return false;
   }
 
   bool success = false;
   String tradeState;
-  if (!extractJsonBoolField(payload, "success", success)) return false;
+  if (!extractJsonBoolField(payload, "success", success)) {
+    Serial.println("pay query no success");
+    Serial.printf("pay query payload=%s\n", payload.substring(0, 200).c_str());
+    return false;
+  }
   extractJsonStringField(payload, "trade_state", tradeState);
   res.success = success;
   res.tradeState = tradeState;

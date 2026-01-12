@@ -662,7 +662,7 @@ void loop() {
     bool ok = payment.query(payCreateRes.outTradeNo.c_str(), qres);
     Serial.printf("pay poll ok=%d success=%d state=%s\n", ok ? 1 : 0, qres.success ? 1 : 0, qres.tradeState.c_str());
     if (ok && qres.success) {
-      state = AppState::Paid;
+      setState(AppState::Paid);
       drawStatusBar(ColorGreen);
       drawWeight(true, lastStableWeight);
       return;
