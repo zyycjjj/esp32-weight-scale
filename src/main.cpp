@@ -8,6 +8,7 @@
 #include "app/hx711.h"
 #include "app/audio_player.h"
 #include "app/gacha_controller.h"
+#include "app/touch_button.h"
 #include "app/payment_client.h"
 #include "app/qr_client.h"
 #include "app/qr_renderer.h"
@@ -28,6 +29,7 @@ static aiw::QrClient qrClient(aiw::config::BackendBaseUrl);
 static aiw::AiClient aiClient(aiw::config::BackendBaseUrl);
 static aiw::AudioPlayer audioPlayer;
 static aiw::GachaController gacha;
+static aiw::TouchButton touchBtn;
 static HardwareSerial printerSerial(1);
 static int printerTxPin = aiw::config::PrinterTxPin;
 static int printerRxPin = aiw::config::PrinterRxPin;
@@ -307,6 +309,7 @@ static void printerPrintDemo(float weight) {
   printerPrintLine("Weight:");
   printerPrintLine(String(weight, 1));
   printerFeed(4);
+  printerSerial.flush();
 }
 
 static void printerPrintResult(float weightKg, float heightCm, float bmi, const String &category, const String &comment, const String &tip) {
@@ -331,6 +334,7 @@ static void printerPrintResult(float weightKg, float heightCm, float bmi, const 
     printerPrintLine(tip);
   }
   printerFeed(4);
+  printerSerial.flush();
 }
 
 static void printerBegin() {
@@ -338,35 +342,37 @@ static void printerBegin() {
   Serial.printf("printer uart tx=%d rx=%d baud=%d\n", printerTxPin, printerRxPin, printerBaud);
 }
 
+struct PrinterPins {
+  int tx;
+  int rx;
+};
+
+static const int kPrinterBaudOptions[] = {9600, 19200, 38400, 57600, 115200, 230400};
+static const PrinterPins kPrinterPinsOptions[] = {
+    {.tx = 41, .rx = 42},
+    {.tx = 42, .rx = 41},
+    {.tx = 43, .rx = 44},
+    {.tx = 44, .rx = 43},
+    {.tx = 10, .rx = 13},
+    {.tx = 13, .rx = 10},
+};
+
 static void printerSelectBaudIndex(int idx) {
-  static const int baudOptions[] = {9600, 19200, 38400, 57600, 115200, 230400};
-  const int n = (int)(sizeof(baudOptions) / sizeof(baudOptions[0]));
+  const int n = (int)(sizeof(kPrinterBaudOptions) / sizeof(kPrinterBaudOptions[0]));
   if (idx < 0) idx = 0;
   if (idx >= n) idx = 0;
   printerBaudIndex = idx;
-  printerBaud = baudOptions[printerBaudIndex];
+  printerBaud = kPrinterBaudOptions[printerBaudIndex];
   printerBegin();
 }
 
 static void printerSelectPinsIndex(int idx) {
-  struct Pins {
-    int tx;
-    int rx;
-  };
-  static const Pins pinsOptions[] = {
-      {.tx = 41, .rx = 42},
-      {.tx = 42, .rx = 41},
-      {.tx = 43, .rx = 44},
-      {.tx = 44, .rx = 43},
-      {.tx = 10, .rx = 13},
-      {.tx = 13, .rx = 10},
-  };
-  const int n = (int)(sizeof(pinsOptions) / sizeof(pinsOptions[0]));
+  const int n = (int)(sizeof(kPrinterPinsOptions) / sizeof(kPrinterPinsOptions[0]));
   if (idx < 0) idx = 0;
   if (idx >= n) idx = 0;
   printerPinsIndex = idx;
-  printerTxPin = pinsOptions[printerPinsIndex].tx;
-  printerRxPin = pinsOptions[printerPinsIndex].rx;
+  printerTxPin = kPrinterPinsOptions[printerPinsIndex].tx;
+  printerRxPin = kPrinterPinsOptions[printerPinsIndex].rx;
   printerBegin();
 }
 
@@ -380,11 +386,33 @@ static void printerSwapPins() {
 static void printerNextBaud() { printerSelectBaudIndex(printerBaudIndex + 1); }
 static void printerNextPins() { printerSelectPinsIndex(printerPinsIndex + 1); }
 
+static void printerAutoScan() {
+  Serial.println("printer scan: start");
+  const int baudN = (int)(sizeof(kPrinterBaudOptions) / sizeof(kPrinterBaudOptions[0]));
+  const int pinsN = (int)(sizeof(kPrinterPinsOptions) / sizeof(kPrinterPinsOptions[0]));
+
+  for (int pi = 0; pi < pinsN; ++pi) {
+    for (int bi = 0; bi < baudN; ++bi) {
+      printerTxPin = kPrinterPinsOptions[pi].tx;
+      printerRxPin = kPrinterPinsOptions[pi].rx;
+      printerBaud = kPrinterBaudOptions[bi];
+      printerBegin();
+
+      printerInit();
+      String line = String("TEST tx=") + printerTxPin + " rx=" + printerRxPin + " baud=" + printerBaud;
+      printerPrintLine(line);
+      printerPrintLine("If you can read this, stop scan.");
+      printerFeed(3);
+      printerSerial.flush();
+      delay(600);
+    }
+  }
+  Serial.println("printer scan: done");
+}
+
 void setup() {
   Serial.begin(115200);
   delay(200);
-
-  pinMode(BootPin, INPUT_PULLUP);
 
   display.begin();
   drawUiFrame();
@@ -396,10 +424,12 @@ void setup() {
   Serial.printf("backend=%s\n", aiw::config::BackendBaseUrl);
   Serial.printf("gacha pin=%d activeHigh=%d pulseMs=%lu\n", aiw::config::GachaPin, aiw::config::GachaActiveHigh ? 1 : 0, (unsigned long)aiw::config::GachaPulseMs);
   Serial.printf("audio enabled=%d bclk=%d lrck=%d dout=%d vol=%d\n", aiw::config::AudioEnabled ? 1 : 0, aiw::config::I2sBclkPin, aiw::config::I2sLrckPin, aiw::config::I2sDoutPin, aiw::config::AudioVolume);
+  Serial.printf("touch pin=%d threshold=%u\n", aiw::config::TouchPin, (unsigned)aiw::config::TouchThreshold);
   drawWifiStatus();
 
   gacha.begin(aiw::config::GachaPin, aiw::config::GachaActiveHigh, aiw::config::GachaPulseMs);
   audioPlayer.begin(aiw::config::AudioEnabled, aiw::config::I2sBclkPin, aiw::config::I2sLrckPin, aiw::config::I2sDoutPin, aiw::config::AudioVolume);
+  touchBtn.begin(BootPin, aiw::config::TouchPin, aiw::config::TouchThreshold);
 
   hx711A.begin();
   int32_t rawA = hx711A.readRaw(500);
@@ -420,8 +450,19 @@ void setup() {
   }
   hx711->tare(20, 200);
   hx711->setScale(aiw::config::Hx711Scale);
-  printerSelectPinsIndex(0);
-  printerSelectBaudIndex(0);
+  if (aiw::config::PrinterTxPin >= 0 && aiw::config::PrinterRxPin >= 0) {
+    printerTxPin = aiw::config::PrinterTxPin;
+    printerRxPin = aiw::config::PrinterRxPin;
+  } else {
+    printerTxPin = 41;
+    printerRxPin = 42;
+  }
+  if (aiw::config::PrinterBaud > 0) {
+    printerBaud = aiw::config::PrinterBaud;
+  } else {
+    printerBaud = 9600;
+  }
+  printerBegin();
 }
 
 void loop() {
@@ -429,6 +470,17 @@ void loop() {
     int c = Serial.read();
     if (c == 't' || c == 'T') {
       tryTareNow();
+    }
+    if (c == 'v' || c == 'V') {
+      Serial.printf("touch value=%u\n", (unsigned)touchBtn.lastTouchValue());
+    }
+    if (c == 'g' || c == 'G') {
+      Serial.println("touch scan (GPIO 1..14):");
+      for (int pin = 1; pin <= 14; ++pin) {
+        uint16_t v = (uint16_t)touchRead(pin);
+        Serial.printf("  pin=%d value=%u\n", pin, (unsigned)v);
+        delay(20);
+      }
     }
     if (c == 'c') {
       Serial.println("calibrate 500g: place 500g after tare, wait, then press c again");
@@ -477,6 +529,9 @@ void loop() {
       Serial.println("printer: next pin pair");
       printerNextPins();
     }
+    if (c == 'z' || c == 'Z') {
+      printerAutoScan();
+    }
     if (c == 'q' || c == 'Q') {
       Serial.printf("force pay: weight=%.2f height=%d\n", lastShownWeight, currentHeightCm);
       lastStableWeight = lastShownWeight;
@@ -504,7 +559,7 @@ void loop() {
   if (state == AppState::InputHeight) {
     bool shortPress = false;
     bool longPress = false;
-    bootButtonUpdate(shortPress, longPress);
+    touchBtn.update(shortPress, longPress);
     if (shortPress) {
       currentHeightCm++;
       if (currentHeightCm > 220) currentHeightCm = 120;
@@ -722,18 +777,31 @@ void loop() {
     rewardAiOk = aiClient.getCommentWithTts(lastStableWeight, lastInputHeightCm, rewardAi);
     Serial.printf("ai ok=%d bmi=%.1f cat=%s audio=%s\n", rewardAiOk ? 1 : 0, rewardAi.bmi, rewardAi.category.c_str(), rewardAi.audioUrl.c_str());
     if (rewardAiOk) {
-      printerPrintResult(lastStableWeight, lastInputHeightCm, rewardAi.bmi, rewardAi.category, rewardAi.comment, rewardAi.tip);
+      Serial.println("printer: print result start");
+      if (!rewardAi.audioUrl.length()) {
+        Serial.println("tts audioUrl empty (backend may be returning tts:null)");
+      }
+      bool audioStarted = false;
       if (rewardAi.audioUrl.length()) {
-        audioPlayer.playWav(aiw::config::BackendBaseUrl, rewardAi.audioUrl, &gacha);
+        audioStarted = audioPlayer.playWavAsync(aiw::config::BackendBaseUrl, rewardAi.audioUrl);
+      }
+      printerPrintResult(lastStableWeight, lastInputHeightCm, rewardAi.bmi, rewardAi.category, rewardAi.comment, rewardAi.tip);
+      Serial.println("printer: print result done");
+      uint32_t waitStart = millis();
+      while (audioStarted && audioPlayer.isPlaying() && (millis() - waitStart < 25000)) {
+        delay(10);
       }
     } else {
+      Serial.println("printer: print fallback start");
       printerPrintResult(lastStableWeight, lastInputHeightCm, 0.0f, "", "", "");
+      Serial.println("printer: print fallback done");
     }
     gacha.trigger();
     while (gacha.isActive() && (millis() - rewardStartMs < 5000)) {
       gacha.loop();
       delay(10);
     }
+    delay(2000);
     drawUiFrame();
     drawHeightPicker();
     setState(AppState::InputHeight);

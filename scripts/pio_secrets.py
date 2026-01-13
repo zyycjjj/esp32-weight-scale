@@ -56,6 +56,8 @@ keys = [
     "AIW_I2S_LRCK_PIN",
     "AIW_I2S_DOUT_PIN",
     "AIW_AUDIO_VOLUME",
+    "AIW_TOUCH_PIN",
+    "AIW_TOUCH_THRESHOLD",
 ]
 
 defines = []
@@ -65,7 +67,7 @@ for k in keys:
         continue
     if v == "":
         continue
-    if (k.endswith("_PIN") or k.endswith("_BAUD") or k.endswith("_MS")) and v.lstrip("-").isdigit():
+    if (k.endswith("_PIN") or k.endswith("_BAUD") or k.endswith("_MS") or k.endswith("_THRESHOLD")) and v.lstrip("-").isdigit():
       defines.append((k, v))
     elif (k.endswith("_ENABLED") or k.endswith("_ACTIVE_HIGH")) and v.lstrip("-").isdigit():
       defines.append((k, v))

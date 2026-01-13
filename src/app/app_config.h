@@ -78,6 +78,14 @@
 #define AIW_AUDIO_VOLUME 12
 #endif
 
+#ifndef AIW_TOUCH_PIN
+#define AIW_TOUCH_PIN -1
+#endif
+
+#ifndef AIW_TOUCH_THRESHOLD
+#define AIW_TOUCH_THRESHOLD 0
+#endif
+
 namespace aiw::config {
 static const char *WifiSsid = AIW_WIFI_SSID;
 static const char *WifiPassword = AIW_WIFI_PASSWORD;
@@ -98,4 +106,6 @@ static const int I2sBclkPin = AIW_I2S_BCLK_PIN;
 static const int I2sLrckPin = AIW_I2S_LRCK_PIN;
 static const int I2sDoutPin = AIW_I2S_DOUT_PIN;
 static const int AudioVolume = AIW_AUDIO_VOLUME;
+static const int TouchPin = AIW_TOUCH_PIN;
+static const uint16_t TouchThreshold = (uint16_t)AIW_TOUCH_THRESHOLD;
 }

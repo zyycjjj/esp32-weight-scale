@@ -24,6 +24,7 @@ void AudioPlayer::begin(bool enabled, int bclkPin, int lrckPin, int doutPin, int
   lrckPin_ = lrckPin;
   doutPin_ = doutPin;
   volume_ = volume;
+  playing_ = false;
 }
 
 static uint16_t readU16LE(const uint8_t *p) {
@@ -222,6 +223,66 @@ bool AudioPlayer::playWav(const char *baseUrl, const String &audioUrlOrPath, Gac
   i2s_driver_uninstall(I2S_NUM_0);
   http.end();
   return remaining == 0;
+}
+
+struct PlayArgs {
+  char *url;
+  AudioPlayer *self;
+};
+
+void audioTask(void *pv) {
+  PlayArgs *args = (PlayArgs *)pv;
+  AudioPlayer *self = args->self;
+  bool ok = false;
+  if (args->url && self) {
+    ok = self->playWav("", String(args->url), nullptr);
+  }
+  if (args->url) free(args->url);
+  free(args);
+  if (self) {
+    self->playing_ = false;
+    self->task_ = nullptr;
+  }
+  (void)ok;
+  vTaskDelete(nullptr);
+}
+
+bool AudioPlayer::playWavAsync(const char *baseUrl, const String &audioUrlOrPath) {
+  if (!enabled_) return false;
+  if (playing_) return false;
+  String url = joinUrl(baseUrl, audioUrlOrPath);
+  if (!url.length()) return false;
+
+  PlayArgs *args = (PlayArgs *)calloc(1, sizeof(PlayArgs));
+  if (!args) return false;
+  args->self = this;
+  args->url = strdup(url.c_str());
+  if (!args->url) {
+    free(args);
+    return false;
+  }
+
+  playing_ = true;
+  BaseType_t ok = xTaskCreatePinnedToCore(audioTask, "aiw_audio", 8192, args, 3, &task_, 1);
+  if (ok != pdPASS) {
+    playing_ = false;
+    free(args->url);
+    free(args);
+    task_ = nullptr;
+    return false;
+  }
+  return true;
+}
+
+bool AudioPlayer::isPlaying() const {
+  return playing_;
+}
+
+void AudioPlayer::stop() {
+  if (!task_) return;
+  vTaskDelete(task_);
+  task_ = nullptr;
+  playing_ = false;
 }
 
 }  // namespace aiw
