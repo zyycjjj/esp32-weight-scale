@@ -11,6 +11,7 @@ struct MonoGlyph16 {
 
 const MonoGlyph16 *findZhGlyph(uint32_t codepoint);
 void drawZhText16(class DisplaySt7789 &display, int x, int y, const char *utf8, uint16_t fg, uint16_t bg);
+void drawZhText28(class DisplaySt7789 &display, int x, int y, const char *utf8, uint16_t fg, uint16_t bg);
 void setZhRenderMode(uint8_t mode);
 uint8_t zhRenderMode();
 

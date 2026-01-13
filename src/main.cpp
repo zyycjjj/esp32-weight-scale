@@ -70,6 +70,9 @@ static constexpr uint16_t ColorBlue = 0x001F;
 static constexpr uint16_t ColorGreen = 0x07E0;
 static constexpr uint16_t ColorGray = 0xC618;
 
+static const char kZhSelectHeight[] = "\xE9\x80\x89\xE6\x8B\xA9\xE8\xBA\xAB\xE9\xAB\x98";
+static const char kZhScanPay[] = "\xE6\x89\xAB\xE7\xA0\x81\xE6\x94\xAF\xE4\xBB\x98";
+
 static constexpr int WeightX = 10;
 static constexpr int WeightY = 10;
 static constexpr int WeightW = 300;
@@ -87,14 +90,19 @@ static constexpr int QrMargin = 6;
 static constexpr int FooterH = 44;
 static constexpr int FooterY = aiw::DisplaySt7789::Height - FooterH - 4;
 
-static constexpr int HeightBtnY = 140;
-static constexpr int HeightBtnH = 90;
-static constexpr int HeightLeftX = 10;
-static constexpr int HeightLeftW = 90;
-static constexpr int HeightNextX = 110;
-static constexpr int HeightNextW = 100;
+static constexpr int HeightSliderX = 30;
+static constexpr int HeightSliderY = 132;
+static constexpr int HeightSliderW = 260;
+static constexpr int HeightSliderH = 20;
+
+static constexpr int HeightBtnY = 164;
+static constexpr int HeightBtnH = 68;
+static constexpr int HeightLeftX = 14;
+static constexpr int HeightLeftW = 86;
+static constexpr int HeightNextX = 108;
+static constexpr int HeightNextW = 104;
 static constexpr int HeightRightX = 220;
-static constexpr int HeightRightW = 90;
+static constexpr int HeightRightW = 86;
 
 static constexpr int WeighBtnY = FooterY;
 static constexpr int WeighBtnH = FooterH;
@@ -238,17 +246,49 @@ static void drawUiFrame() {
 
 static void drawWifiStatus() {
   display.beginWrite();
+  int x = aiw::DisplaySt7789::Width - 24;
+  int y = 6;
+  display.fillRect(x, y, 18, 18, ColorWhite);
   uint16_t c = wifi.isConnected() ? ColorGreen : ColorRed;
-  display.fillRect(WifiDotX, WifiDotY, WifiDotSize, WifiDotSize, c);
+  display.fillRect(x + 2, y + 12, 3, 4, c);
+  display.fillRect(x + 7, y + 9, 3, 7, c);
+  display.fillRect(x + 12, y + 6, 3, 10, c);
   display.endWrite();
 }
 
+static void fillRoundRect(int x, int y, int w, int h, int r, uint16_t color) {
+  if (w <= 0 || h <= 0) return;
+  if (r < 1) {
+    display.fillRect(x, y, w, h, color);
+    return;
+  }
+  if (r * 2 > w) r = w / 2;
+  if (r * 2 > h) r = h / 2;
+  display.fillRect(x + r, y, w - 2 * r, h, color);
+  display.fillRect(x, y + r, r, h - 2 * r, color);
+  display.fillRect(x + w - r, y + r, r, h - 2 * r, color);
+  for (int dy = 0; dy < r; ++dy) {
+    float fy = (float)dy + 0.5f;
+    float fr = (float)r;
+    int dx = (int)floorf(sqrtf(fr * fr - fy * fy));
+    int sx = r - dx;
+    int ww = w - 2 * sx;
+    if (ww > 0) {
+      display.fillRect(x + sx, y + dy, ww, 1, color);
+      display.fillRect(x + sx, y + h - 1 - dy, ww, 1, color);
+    }
+  }
+}
+
 static void drawButton(int x, int y, int w, int h, uint16_t bg, const char *label) {
-  display.fillRect(x, y, w, h, bg);
-  display.fillRect(x, y, w, 2, ColorGray);
-  display.fillRect(x, y + h - 2, w, 2, ColorGray);
-  display.fillRect(x, y, 2, h, ColorGray);
-  display.fillRect(x + w - 2, y, 2, h, ColorGray);
+  int r = 10;
+  uint16_t border = 0x7BEF;
+  fillRoundRect(x, y, w, h, r, border);
+  if (w > 4 && h > 4) {
+    fillRoundRect(x + 2, y + 2, w - 4, h - 4, r - 2, bg);
+    display.fillRect(x + 4, y + 4, w - 8, 2, 0xFFFF);
+    display.fillRect(x + 4, y + h - 6, w - 8, 2, 0xAD55);
+  }
   if (label && label[0]) {
     int len = (int)strlen(label);
     int scale = 2;
@@ -274,7 +314,7 @@ static void drawHeaderScanPay() {
   display.beginWrite();
   display.fillRect(2, 2, aiw::DisplaySt7789::Width - 4, HeaderH - 4, ColorWhite);
   display.fillRect(80, 6, 1, HeaderH - 12, ColorGray);
-  aiw::drawZhText16(display, 12, 12, "扫码支付", ColorBlack, ColorWhite);
+  aiw::drawZhText28(display, 12, 8, kZhScanPay, ColorBlack, ColorWhite);
   display.endWrite();
   drawWifiStatus();
 }
@@ -298,9 +338,19 @@ static void readTouchMapped(bool &touching, int &x, int &y) {
   touching = false;
   x = 0;
   y = 0;
+  static bool prevTouching = false;
+  static bool hasStable = false;
+  static int stableX = 0;
+  static int stableY = 0;
+  static uint32_t stableMs = 0;
+
   aiw::TouchPoint p;
   if (!touchScreen.read(p)) return;
-  if (!p.touching) return;
+  if (!p.touching) {
+    prevTouching = false;
+    hasStable = false;
+    return;
+  }
   int tx = p.x;
   int ty = p.y;
   uint16_t mx = touchScreen.maxX();
@@ -325,9 +375,34 @@ static void readTouchMapped(bool &touching, int &x, int &y) {
   ty = (int)((uint32_t)ty * (uint32_t)aiw::DisplaySt7789::Height / (uint32_t)my);
   if (tx >= aiw::DisplaySt7789::Width) tx = aiw::DisplaySt7789::Width - 1;
   if (ty >= aiw::DisplaySt7789::Height) ty = aiw::DisplaySt7789::Height - 1;
+
+  uint32_t nowMs = millis();
+
+  if (!prevTouching) {
+    prevTouching = true;
+    hasStable = true;
+    stableX = tx;
+    stableY = ty;
+    stableMs = nowMs;
+  } else if (!hasStable) {
+    hasStable = true;
+    stableX = tx;
+    stableY = ty;
+    stableMs = nowMs;
+  } else {
+    int dx = tx - stableX;
+    int dy = ty - stableY;
+    if (dx < 0) dx = -dx;
+    if (dy < 0) dy = -dy;
+    if ((nowMs - stableMs) < 70 && (dx > 120 || dy > 120)) return;
+    stableX = (stableX * 3 + tx) / 4;
+    stableY = (stableY * 3 + ty) / 4;
+    stableMs = nowMs;
+  }
+
   touching = true;
-  x = tx;
-  y = ty;
+  x = stableX;
+  y = stableY;
 }
 
 static bool touchTapInRect(bool touching, int x, int y, int rx, int ry, int rw, int rh, uint32_t nowMs, bool &prev, int &sx, int &sy, int &lx, int &ly, uint32_t &startMs) {
@@ -349,8 +424,8 @@ static bool touchTapInRect(bool touching, int x, int y, int rx, int ry, int rw, 
     if (dx < 0) dx = -dx;
     if (dy < 0) dy = -dy;
     uint32_t dur = nowMs - startMs;
-    bool isTap = dur <= 350 && dx <= 12 && dy <= 12;
-    bool in = (lx >= rx && lx < rx + rw && ly >= ry && ly < ry + rh);
+    bool isTap = dur <= 650 && dx <= 32 && dy <= 32;
+    bool in = ((lx >= rx && lx < rx + rw && ly >= ry && ly < ry + rh) || (sx >= rx && sx < rx + rw && sy >= ry && sy < ry + rh));
     tapped = isTap && in;
   }
   prev = touching;
@@ -376,11 +451,11 @@ static bool touchTapEvent(bool touching, int x, int y, uint32_t nowMs, bool &pre
     if (dx < 0) dx = -dx;
     if (dy < 0) dy = -dy;
     uint32_t dur = nowMs - startMs;
-    bool isTap = dur <= 350 && dx <= 12 && dy <= 12;
+    bool isTap = dur <= 650 && dx <= 32 && dy <= 32;
     if (isTap) {
       tapped = true;
-      tapX = lx;
-      tapY = ly;
+      tapX = (sx + lx) / 2;
+      tapY = (sy + ly) / 2;
     }
   }
   prev = touching;
@@ -402,44 +477,58 @@ static void drawWeight(bool stable, float weight) {
 }
 
 static void drawStatusBar(uint16_t color) {
-  display.beginWrite();
-  display.fillRect(StateDotX, StateDotY, StateDotSize, StateDotSize, color);
-  display.endWrite();
+  (void)color;
 }
 
 static void drawHeightPicker() {
   char mid[8];
   snprintf(mid, sizeof(mid), "%d", currentHeightCm);
 
-  auto drawBtn = [&](int x, int y, int w, int h, uint16_t bg) {
-    display.fillRect(x, y, w, h, bg);
-    display.fillRect(x, y, w, 2, ColorGray);
-    display.fillRect(x, y + h - 2, w, 2, ColorGray);
-    display.fillRect(x, y, 2, h, ColorGray);
-    display.fillRect(x + w - 2, y, 2, h, ColorGray);
-  };
-
   display.beginWrite();
   display.clear(ColorWhite);
   display.drawBorder(ColorBlack, 2);
 
-  aiw::drawZhText16(display, 12, 12, "选择身高", ColorBlack, ColorWhite);
+  aiw::drawZhText28(display, 12, 8, kZhSelectHeight, ColorBlack, ColorWhite);
   display.fillRect(0, 40, aiw::DisplaySt7789::Width, 1, ColorGray);
 
   sevenSeg.drawText(108, 52, mid, 5, ColorBlack, ColorWhite);
 
-  drawBtn(HeightLeftX, HeightBtnY, HeightLeftW, HeightBtnH, 0xF7DE);
-  aiw::drawText5x7(display, HeightLeftX + 34, HeightBtnY + 18, "<", ColorBlack, 0xF7DE, 8);
+  display.fillRect(HeightSliderX, HeightSliderY, HeightSliderW, HeightSliderH, 0xEF7D);
+  display.fillRect(HeightSliderX, HeightSliderY + HeightSliderH - 2, HeightSliderW, 2, 0xC618);
+  display.fillRect(HeightSliderX, HeightSliderY, HeightSliderW, 2, 0xFFFF);
+  aiw::drawText5x7(display, HeightSliderX - 2, HeightSliderY - 12, "120", ColorGray, ColorWhite, 2);
+  aiw::drawText5x7(display, HeightSliderX + HeightSliderW - 2 - 3 * 12, HeightSliderY - 12, "220", ColorGray, ColorWhite, 2);
+  int knobX = HeightSliderX + (currentHeightCm - 120) * (HeightSliderW - 14) / 100;
+  fillRoundRect(knobX, HeightSliderY - 4, 14, HeightSliderH + 8, 6, 0x5ACB);
+  fillRoundRect(knobX + 2, HeightSliderY - 2, 10, HeightSliderH + 4, 5, 0xE7FF);
 
-  drawBtn(HeightNextX, HeightBtnY, HeightNextW, HeightBtnH, 0xE7FF);
-  aiw::drawText5x7(display, HeightNextX + 18, HeightBtnY + 34, "NEXT", ColorBlack, 0xE7FF, 3);
+  drawButton(HeightLeftX, HeightBtnY, HeightLeftW, HeightBtnH, 0xF7DE, "<");
 
-  drawBtn(HeightRightX, HeightBtnY, HeightRightW, HeightBtnH, 0xF7DE);
-  aiw::drawText5x7(display, HeightRightX + 34, HeightBtnY + 18, ">", ColorBlack, 0xF7DE, 8);
+  drawButton(HeightNextX, HeightBtnY, HeightNextW, HeightBtnH, 0xE7FF, "NEXT");
+
+  drawButton(HeightRightX, HeightBtnY, HeightRightW, HeightBtnH, 0xF7DE, ">");
 
   display.endWrite();
   drawWifiStatus();
   drawStatusBar(ColorBlue);
+}
+
+static void updateHeightPickerValueOnly() {
+  char mid[8];
+  snprintf(mid, sizeof(mid), "%d", currentHeightCm);
+  display.beginWrite();
+  sevenSeg.clearRect(4, 40, aiw::DisplaySt7789::Width - 8, 92, ColorWhite);
+  sevenSeg.drawText(108, 52, mid, 5, ColorBlack, ColorWhite);
+  display.fillRect(HeightSliderX, HeightSliderY, HeightSliderW, HeightSliderH, 0xEF7D);
+  display.fillRect(HeightSliderX, HeightSliderY + HeightSliderH - 2, HeightSliderW, 2, 0xC618);
+  display.fillRect(HeightSliderX, HeightSliderY, HeightSliderW, 2, 0xFFFF);
+  aiw::drawText5x7(display, HeightSliderX - 2, HeightSliderY - 12, "120", ColorGray, ColorWhite, 2);
+  aiw::drawText5x7(display, HeightSliderX + HeightSliderW - 2 - 3 * 12, HeightSliderY - 12, "220", ColorGray, ColorWhite, 2);
+  int knobX = HeightSliderX + (currentHeightCm - 120) * (HeightSliderW - 14) / 100;
+  fillRoundRect(knobX, HeightSliderY - 4, 14, HeightSliderH + 8, 6, 0x5ACB);
+  fillRoundRect(knobX + 2, HeightSliderY - 2, 10, HeightSliderH + 4, 5, 0xE7FF);
+  display.endWrite();
+  drawWifiStatus();
 }
 
 static void enterWeighingFromHeight() {
@@ -842,6 +931,7 @@ void setup() {
   delay(200);
 
   display.begin();
+  aiw::setZhRenderMode(3);
   drawUiFrame();
   drawHeightPicker();
 
@@ -914,17 +1004,17 @@ void loop() {
 
   while (Serial.available() > 0) {
     int c = Serial.read();
-    if (c == 'p' || c == 'P') {
+    if (c == 'p') {
       touchRawLogEnabled = !touchRawLogEnabled;
       Serial.printf("touch raw log=%d\n", touchRawLogEnabled ? 1 : 0);
     }
-    if (c == 'm' || c == 'M') {
+    if (c == 'm') {
       touchMapMode = (uint8_t)((touchMapMode + 1) & 0x07u);
       Serial.printf("touch map mode=%u (swap=%u mx=%u my=%u)\n", (unsigned)touchMapMode, (unsigned)((touchMapMode & 0x01u) ? 1 : 0), (unsigned)((touchMapMode & 0x02u) ? 1 : 0), (unsigned)((touchMapMode & 0x04u) ? 1 : 0));
       uiDirty = true;
       if (state == AppState::InputHeight) drawHeightPicker();
     }
-    if (c == 'z' || c == 'Z') {
+    if (c == 'Z') {
       aiw::setZhRenderMode(aiw::zhRenderMode() + 1);
       Serial.printf("zh render mode=%u\n", (unsigned)aiw::zhRenderMode());
       uiDirty = true;
@@ -942,8 +1032,8 @@ void loop() {
       for (int pin = 1; pin <= 14; ++pin) {
         uint16_t v = (uint16_t)touchRead(pin);
         Serial.printf("  pin=%d value=%u\n", pin, (unsigned)v);
-        delay(20);
-      }
+    delay(10);
+  }
     }
     if (c == 'c') {
       Serial.println("calibrate 500g: place 500g after tare, wait, then press c again");
@@ -972,7 +1062,7 @@ void loop() {
       printerSelfTest();
       printerFeed(2);
     }
-    if (c == 'p' || c == 'P') {
+    if (c == 'P') {
       Serial.println("printer: demo");
       printerPrintDemo(lastShownWeight);
     }
@@ -992,7 +1082,7 @@ void loop() {
       Serial.println("printer: next pin pair");
       printerNextPins();
     }
-    if (c == 'z' || c == 'Z') {
+    if (c == 'z') {
       printerAutoScan();
     }
     if (c == 'q' || c == 'Q') {
@@ -1228,30 +1318,22 @@ void loop() {
     int tx = 0;
     int ty = 0;
     readTouchMapped(touching, tx, ty);
+    if (touching) {
+      int px = tx - 1;
+      int py = ty - 1;
+      if (px < 0) px = 0;
+      if (py < 0) py = 0;
+      int pw = 3;
+      int ph = 3;
+      if (px + pw > aiw::DisplaySt7789::Width) pw = aiw::DisplaySt7789::Width - px;
+      if (py + ph > aiw::DisplaySt7789::Height) ph = aiw::DisplaySt7789::Height - py;
+      display.beginWrite();
+      display.fillRect(px, py, pw, ph, ColorBlack);
+      display.endWrite();
+    }
 
     uint32_t now = millis();
-    if (touching && !heightTouchPrev) {
-      if (now - lastHeightBtnMs > 180) {
-        if (ty >= HeightBtnY && ty < HeightBtnY + HeightBtnH) {
-          if (tx >= HeightLeftX && tx < HeightLeftX + HeightLeftW) {
-            currentHeightCm--;
-            if (currentHeightCm < 120) currentHeightCm = 120;
-            drawHeightPicker();
-            lastHeightBtnMs = now;
-          } else if (tx >= HeightRightX && tx < HeightRightX + HeightRightW) {
-            currentHeightCm++;
-            if (currentHeightCm > 220) currentHeightCm = 220;
-            drawHeightPicker();
-            lastHeightBtnMs = now;
-          } else if (tx >= HeightNextX && tx < HeightNextX + HeightNextW) {
-            lastHeightBtnMs = now;
-            enterWeighingFromHeight();
-            delay(10);
-            return;
-          }
-        }
-      }
-    }
+    bool inSlider = touching && (tx >= HeightSliderX && tx < HeightSliderX + HeightSliderW && ty >= HeightSliderY - 16 && ty < HeightSliderY + HeightSliderH + 16);
     if (touching && !heightTouchPrev) {
       heightTouchStartX = tx;
       heightTouchStartY = ty;
@@ -1259,6 +1341,11 @@ void loop() {
       heightTouchLastY = ty;
       heightTouchStartMs = now;
       heightTouchStartZone = 0;
+      if (inSlider) {
+        heightTouchStartZone = 4;
+      } else if (tx >= 80 && tx < 240 && ty >= 46 && ty < HeightSliderY - 8) {
+        heightTouchStartZone = 5;
+      }
       if (ty >= HeightBtnY && ty < HeightBtnY + HeightBtnH) {
         if (tx >= HeightLeftX && tx < HeightLeftX + HeightLeftW) heightTouchStartZone = 1;
         else if (tx >= HeightNextX && tx < HeightNextX + HeightNextW) heightTouchStartZone = 2;
@@ -1268,6 +1355,21 @@ void loop() {
     if (touching) {
       heightTouchLastX = tx;
       heightTouchLastY = ty;
+      if (inSlider) {
+        if (now - lastHeightBtnMs > 25) {
+          int pos = tx - HeightSliderX;
+          if (pos < 0) pos = 0;
+          if (pos > HeightSliderW - 1) pos = HeightSliderW - 1;
+          int nh = 120 + (pos * 100) / (HeightSliderW - 1);
+          if (nh < 120) nh = 120;
+          if (nh > 220) nh = 220;
+          if (nh != currentHeightCm) {
+            currentHeightCm = nh;
+            updateHeightPickerValueOnly();
+            lastHeightBtnMs = now;
+          }
+        }
+      }
     }
     bool heightChanged = false;
     if (!touching && heightTouchPrev) {
@@ -1276,19 +1378,37 @@ void loop() {
       if (dx < 0) dx = -dx;
       if (dy < 0) dy = -dy;
       int rawDx = heightTouchLastX - heightTouchStartX;
+      int rawDy = heightTouchLastY - heightTouchStartY;
       uint32_t dur = now - heightTouchStartMs;
 
       bool isTap = dur <= 350 && dx <= 12 && dy <= 12;
-      bool isSwipe = dur <= 700 && dx >= 60 && dy <= 35;
+      bool isSwipe = dur <= 700 && ((dx >= 60 && dy <= 35) || (dy >= 60 && dx <= 35));
 
       if (isSwipe) {
-        if (rawDx > 0) currentHeightCm++;
-        else currentHeightCm--;
+        if (dy >= 60 && dx <= 35 && heightTouchStartZone == 5) {
+          if (rawDy < 0) currentHeightCm++;
+          else currentHeightCm--;
+        } else {
+          if (rawDx > 0) currentHeightCm++;
+          else currentHeightCm--;
+        }
         if (currentHeightCm > 220) currentHeightCm = 220;
         if (currentHeightCm < 120) currentHeightCm = 120;
         heightChanged = true;
       } else if (isTap) {
-        if (heightTouchStartZone == 1) {
+        bool tapInSlider = (heightTouchLastX >= HeightSliderX && heightTouchLastX < HeightSliderX + HeightSliderW && heightTouchLastY >= HeightSliderY - 16 && heightTouchLastY < HeightSliderY + HeightSliderH + 16);
+        if (tapInSlider) {
+          int pos = heightTouchLastX - HeightSliderX;
+          if (pos < 0) pos = 0;
+          if (pos > HeightSliderW - 1) pos = HeightSliderW - 1;
+          int nh = 120 + (pos * 100) / (HeightSliderW - 1);
+          if (nh < 120) nh = 120;
+          if (nh > 220) nh = 220;
+          if (nh != currentHeightCm) {
+            currentHeightCm = nh;
+            heightChanged = true;
+          }
+        } else if (heightTouchStartZone == 1) {
           currentHeightCm--;
           if (currentHeightCm < 120) currentHeightCm = 120;
           heightChanged = true;
@@ -1300,6 +1420,10 @@ void loop() {
           enterWeighingFromHeight();
           delay(10);
           return;
+        } else if (heightTouchStartZone == 5) {
+          currentHeightCm++;
+          if (currentHeightCm > 220) currentHeightCm = 120;
+          heightChanged = true;
         }
       }
     }
@@ -1320,9 +1444,9 @@ void loop() {
     }
 
     if (heightChanged) {
-      drawHeightPicker();
+      updateHeightPickerValueOnly();
     }
-    delay(10);
+    delay(5);
     return;
   }
 
@@ -1355,17 +1479,19 @@ void loop() {
     uint32_t nowTap = millis();
     bool tapped = touchTapEvent(touching, tx, ty, nowTap, uiTouchPrev, uiTouchStartX, uiTouchStartY, uiTouchLastX, uiTouchLastY, uiTouchStartMs, tapX, tapY);
     if (tapped) {
-      if (tapY >= WeighBtnY && tapY < WeighBtnY + WeighBtnH) {
-        if (tapX >= WeighTareX && tapX < WeighTareX + WeighTareW) {
+      auto inRect = [&](int px, int py, int rx, int ry, int rw, int rh) -> bool { return px >= rx && px < rx + rw && py >= ry && py < ry + rh; };
+      auto inRectPad = [&](int px, int py, int rx, int ry, int rw, int rh, int pad) -> bool { return px >= rx - pad && px < rx + rw + pad && py >= ry - pad && py < ry + rh + pad; };
+      bool inTare = inRectPad(tapX, tapY, WeighTareX, WeighBtnY, WeighTareW, WeighBtnH, 14) || inRectPad(uiTouchStartX, uiTouchStartY, WeighTareX, WeighBtnY, WeighTareW, WeighBtnH, 14);
+      bool inBack = inRectPad(tapX, tapY, WeighBackX, WeighBtnY, WeighBackW, WeighBtnH, 14) || inRectPad(uiTouchStartX, uiTouchStartY, WeighBackX, WeighBtnY, WeighBackW, WeighBtnH, 14);
+      if (inTare) {
           tryTareNow();
           stableHoldStartMs = 0;
-        } else if (tapX >= WeighBackX && tapX < WeighBackX + WeighBackW) {
-          stableHoldStartMs = 0;
-          heightTouchPrev = false;
-          setState(AppState::InputHeight);
-          delay(10);
-          return;
-        }
+      } else if (inBack) {
+        stableHoldStartMs = 0;
+        heightTouchPrev = false;
+        setState(AppState::InputHeight);
+        delay(10);
+        return;
       }
     }
 
@@ -1576,7 +1702,9 @@ void loop() {
     uint32_t nowTap = millis();
     bool tapped = touchTapEvent(touching, tx, ty, nowTap, uiTouchPrev, uiTouchStartX, uiTouchStartY, uiTouchLastX, uiTouchLastY, uiTouchStartMs, tapX, tapY);
     if (tapped) {
-      bool inCancel = (tapX >= PayCancelX && tapX < PayCancelX + PayCancelW && tapY >= PayCancelY && tapY < PayCancelY + PayCancelH);
+      auto inRect = [&](int px, int py, int rx, int ry, int rw, int rh) -> bool { return px >= rx && px < rx + rw && py >= ry && py < ry + rh; };
+      auto inRectPad = [&](int px, int py, int rx, int ry, int rw, int rh, int pad) -> bool { return px >= rx - pad && px < rx + rw + pad && py >= ry - pad && py < ry + rh + pad; };
+      bool inCancel = inRectPad(tapX, tapY, PayCancelX, PayCancelY, PayCancelW, PayCancelH, 14) || inRectPad(uiTouchStartX, uiTouchStartY, PayCancelX, PayCancelY, PayCancelW, PayCancelH, 14);
       if (inCancel) {
         setState(AppState::Weighing);
         delay(10);
@@ -1673,14 +1801,16 @@ void loop() {
       uint32_t nowTap = millis();
       bool tapped = touchTapEvent(touching, tx, ty, nowTap, uiTouchPrev, uiTouchStartX, uiTouchStartY, uiTouchLastX, uiTouchLastY, uiTouchStartMs, tapX, tapY);
       if (tapped) {
-        bool inRestart = (tapX >= 90 && tapX < 230 && tapY >= FooterY && tapY < FooterY + FooterH);
+        auto inRect = [&](int px, int py, int rx, int ry, int rw, int rh) -> bool { return px >= rx && px < rx + rw && py >= ry && py < ry + rh; };
+        auto inRectPad = [&](int px, int py, int rx, int ry, int rw, int rh, int pad) -> bool { return px >= rx - pad && px < rx + rw + pad && py >= ry - pad && py < ry + rh + pad; };
+        bool inRestart = inRectPad(tapX, tapY, 90, FooterY, 140, FooterH, 14) || inRectPad(uiTouchStartX, uiTouchStartY, 90, FooterY, 140, FooterH, 14);
         if (inRestart) break;
       }
       bool sp = false;
       bool lp = false;
       bootButtonUpdate(sp, lp);
       if (sp || lp) break;
-      delay(20);
+      delay(10);
     }
 
     uiTouchPrev = false;

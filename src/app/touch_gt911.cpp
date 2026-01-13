@@ -97,9 +97,9 @@ bool TouchGt911::read(TouchPoint &out) {
     writeReg16(0x814E, &z, 1);
     return false;
   }
+
   uint16_t mx = maxX_ ? maxX_ : 0xFFFFu;
   uint16_t my = maxY_ ? maxY_ : 0xFFFFu;
-  auto inRange = [&](uint16_t x, uint16_t y) -> bool { return x < mx && y < my; };
 
   uint16_t x1 = (uint16_t)buf[1] | ((uint16_t)buf[2] << 8);
   uint16_t y1 = (uint16_t)buf[3] | ((uint16_t)buf[4] << 8);
@@ -110,21 +110,44 @@ bool TouchGt911::read(TouchPoint &out) {
   uint16_t x4 = (uint16_t)buf[1] | ((uint16_t)buf[0] << 8);
   uint16_t y4 = (uint16_t)buf[3] | ((uint16_t)buf[2] << 8);
 
-  uint16_t x = x1;
-  uint16_t y = y1;
-  if (inRange(x2, y2)) {
-    x = x2;
-    y = y2;
-  } else if (inRange(x3, y3)) {
-    x = x3;
-    y = y3;
-  } else if (inRange(x4, y4)) {
-    x = x4;
-    y = y4;
+  auto inRange = [&](uint16_t x, uint16_t y) -> bool { return x < mx && y < my; };
+  uint16_t xs[] = {x1, x2, x3, x4};
+  uint16_t ys[] = {y1, y2, y3, y4};
+
+  static bool hasLast = false;
+  static uint16_t lastX = 0;
+  static uint16_t lastY = 0;
+
+  int best = -1;
+  uint32_t bestScore = 0xFFFFFFFFu;
+  for (int i = 0; i < 4; ++i) {
+    if (!inRange(xs[i], ys[i])) continue;
+    if (!hasLast) {
+      best = i;
+      break;
+    }
+    int dx = (int)xs[i] - (int)lastX;
+    int dy = (int)ys[i] - (int)lastY;
+    if (dx < 0) dx = -dx;
+    if (dy < 0) dy = -dy;
+    uint32_t score = (uint32_t)dx * (uint32_t)dx + (uint32_t)dy * (uint32_t)dy;
+    if (score < bestScore) {
+      bestScore = score;
+      best = i;
+    }
   }
+  if (best < 0) best = 0;
+  uint16_t x = xs[best];
+  uint16_t y = ys[best];
+  if (maxX_ && x >= maxX_) x = (uint16_t)(maxX_ - 1);
+  if (maxY_ && y >= maxY_) y = (uint16_t)(maxY_ - 1);
+
   out.touching = true;
   out.x = (int)x;
   out.y = (int)y;
+  hasLast = true;
+  lastX = x;
+  lastY = y;
   uint8_t z = 0;
   writeReg16(0x814E, &z, 1);
   return true;

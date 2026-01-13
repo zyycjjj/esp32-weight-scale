@@ -1,13 +1,14 @@
 #include "app/zh_bitmaps.h"
 
 #include "app/display_st7789.h"
+#include "app/zh_font_gb1_28_subset.h"
 
 #include <stddef.h>
 #include <stdint.h>
 
 namespace aiw {
 
-static uint8_t g_renderMode = 0;
+static uint8_t g_renderMode = 3;
 
 void setZhRenderMode(uint8_t mode) {
   g_renderMode = (uint8_t)(mode & 0x03u);
@@ -78,7 +79,11 @@ static bool utf8Next(const char *s, size_t &i, uint32_t &cp) {
   }
   if ((c & 0xE0) == 0xC0) {
     uint8_t c1 = (uint8_t)s[i + 1];
-    if ((c1 & 0xC0) != 0x80) return false;
+    if ((c1 & 0xC0) != 0x80) {
+      cp = 0xFFFD;
+      i += 1;
+      return true;
+    }
     cp = ((uint32_t)(c & 0x1F) << 6) | (uint32_t)(c1 & 0x3F);
     i += 2;
     return true;
@@ -86,12 +91,18 @@ static bool utf8Next(const char *s, size_t &i, uint32_t &cp) {
   if ((c & 0xF0) == 0xE0) {
     uint8_t c1 = (uint8_t)s[i + 1];
     uint8_t c2 = (uint8_t)s[i + 2];
-    if (((c1 & 0xC0) != 0x80) || ((c2 & 0xC0) != 0x80)) return false;
+    if (((c1 & 0xC0) != 0x80) || ((c2 & 0xC0) != 0x80)) {
+      cp = 0xFFFD;
+      i += 1;
+      return true;
+    }
     cp = ((uint32_t)(c & 0x0F) << 12) | ((uint32_t)(c1 & 0x3F) << 6) | (uint32_t)(c2 & 0x3F);
     i += 3;
     return true;
   }
-  return false;
+  cp = 0xFFFD;
+  i += 1;
+  return true;
 }
 
 static void drawGlyph16(DisplaySt7789 &display, int x, int y, const uint8_t *rows, uint16_t fg, uint16_t bg) {
@@ -125,6 +136,34 @@ void drawZhText16(DisplaySt7789 &display, int x, int y, const char *utf8, uint16
     } else {
       cx += 8;
     }
+  }
+}
+
+static void drawGlyph28Bpp4(DisplaySt7789 &display, int x, int y, const ZhGlyph28 &g, uint16_t fg, uint16_t bg) {
+  int idx = 0;
+  for (int r = 0; r < (int)g.box_h; ++r) {
+    for (int c = 0; c < (int)g.box_w; ++c) {
+      uint8_t b = g.data[idx / 2];
+      uint8_t v = (idx % 2 == 0) ? (uint8_t)((b >> 4) & 0x0Fu) : (uint8_t)(b & 0x0Fu);
+      bool on = v >= 4;
+      display.fillRect(x + c, y + r, 1, 1, on ? fg : bg);
+      idx++;
+    }
+  }
+}
+
+void drawZhText28(DisplaySt7789 &display, int x, int y, const char *utf8, uint16_t fg, uint16_t bg) {
+  if (!utf8) return;
+  size_t i = 0;
+  int cx = x;
+  while (true) {
+    uint32_t cp = 0;
+    if (!utf8Next(utf8, i, cp)) break;
+    const ZhGlyph28 *g = findZhGlyph28(cp);
+    if (g) {
+      drawGlyph28Bpp4(display, cx, y, *g, fg, bg);
+    }
+    cx += 28;
   }
 }
 
