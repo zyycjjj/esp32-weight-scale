@@ -11,6 +11,7 @@ struct AiWithTtsResult {
   String comment;
   String tip;
   String audioUrl;
+  String printPayloadBase64;
 };
 
 class AiClient {
@@ -25,4 +26,3 @@ class AiClient {
 };
 
 }  // namespace aiw
-

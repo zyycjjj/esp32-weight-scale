@@ -55,6 +55,11 @@ keys = [
     "AIW_I2S_BCLK_PIN",
     "AIW_I2S_LRCK_PIN",
     "AIW_I2S_DOUT_PIN",
+    "AIW_I2S_MCLK_PIN",
+    "AIW_PA_CTRL_PIN",
+    "AIW_I2C_SDA_PIN",
+    "AIW_I2C_SCL_PIN",
+    "AIW_CODEC_I2C_ADDR",
     "AIW_AUDIO_VOLUME",
     "AIW_TOUCH_PIN",
     "AIW_TOUCH_THRESHOLD",
@@ -67,7 +72,12 @@ for k in keys:
         continue
     if v == "":
         continue
-    if (k.endswith("_PIN") or k.endswith("_BAUD") or k.endswith("_MS") or k.endswith("_THRESHOLD")) and v.lstrip("-").isdigit():
+    if k.endswith("_ADDR"):
+      try:
+        defines.append((k, str(int(v, 0))))
+      except ValueError:
+        continue
+    elif (k.endswith("_PIN") or k.endswith("_BAUD") or k.endswith("_MS") or k.endswith("_THRESHOLD") or k.endswith("_VOLUME")) and v.lstrip("-").isdigit():
       defines.append((k, v))
     elif (k.endswith("_ENABLED") or k.endswith("_ACTIVE_HIGH")) and v.lstrip("-").isdigit():
       defines.append((k, v))

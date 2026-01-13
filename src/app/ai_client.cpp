@@ -103,10 +103,19 @@ bool AiClient::getCommentWithTts(float weightKg, float heightCm, AiWithTtsResult
   extractJsonStringField(payload, "category", out.category);
   extractJsonStringField(payload, "comment", out.comment);
   extractJsonStringField(payload, "tip", out.tip);
-  extractJsonStringField(payload, "audioUrl", out.audioUrl);
+  if (!extractJsonStringField(payload, "audioUrl", out.audioUrl)) {
+    out.audioUrl = "";
+  }
+  if (!out.audioUrl.length()) {
+    int ttsIdx = payload.indexOf("\"tts\":");
+    if (ttsIdx >= 0) {
+      String tail = payload.substring(ttsIdx);
+      extractJsonStringField(tail, "audioUrl", out.audioUrl);
+    }
+  }
+  extractJsonStringField(payload, "printPayloadBase64", out.printPayloadBase64);
   out.ok = true;
   return true;
 }
 
 }  // namespace aiw
-

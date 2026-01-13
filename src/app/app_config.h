@@ -74,6 +74,26 @@
 #define AIW_I2S_DOUT_PIN -1
 #endif
 
+#ifndef AIW_I2S_MCLK_PIN
+#define AIW_I2S_MCLK_PIN -1
+#endif
+
+#ifndef AIW_PA_CTRL_PIN
+#define AIW_PA_CTRL_PIN -1
+#endif
+
+#ifndef AIW_I2C_SDA_PIN
+#define AIW_I2C_SDA_PIN -1
+#endif
+
+#ifndef AIW_I2C_SCL_PIN
+#define AIW_I2C_SCL_PIN -1
+#endif
+
+#ifndef AIW_CODEC_I2C_ADDR
+#define AIW_CODEC_I2C_ADDR 0x18
+#endif
+
 #ifndef AIW_AUDIO_VOLUME
 #define AIW_AUDIO_VOLUME 12
 #endif
@@ -105,6 +125,11 @@ static const bool AudioEnabled = (AIW_AUDIO_ENABLED != 0);
 static const int I2sBclkPin = AIW_I2S_BCLK_PIN;
 static const int I2sLrckPin = AIW_I2S_LRCK_PIN;
 static const int I2sDoutPin = AIW_I2S_DOUT_PIN;
+static const int I2sMclkPin = AIW_I2S_MCLK_PIN;
+static const int PaCtrlPin = AIW_PA_CTRL_PIN;
+static const int I2cSdaPin = AIW_I2C_SDA_PIN;
+static const int I2cSclPin = AIW_I2C_SCL_PIN;
+static const int CodecI2cAddr = AIW_CODEC_I2C_ADDR;
 static const int AudioVolume = AIW_AUDIO_VOLUME;
 static const int TouchPin = AIW_TOUCH_PIN;
 static const uint16_t TouchThreshold = (uint16_t)AIW_TOUCH_THRESHOLD;

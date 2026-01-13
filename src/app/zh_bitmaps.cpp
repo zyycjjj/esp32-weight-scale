@@ -7,6 +7,16 @@
 
 namespace aiw {
 
+static uint8_t g_renderMode = 0;
+
+void setZhRenderMode(uint8_t mode) {
+  g_renderMode = (uint8_t)(mode & 0x03u);
+}
+
+uint8_t zhRenderMode() {
+  return g_renderMode;
+}
+
 static const uint8_t glyph_sel_0[32] = {
     0x00,0x00, 0x0F,0xF0, 0x08,0x10, 0x0B,0xD0, 0x08,0x10, 0x0F,0xF0, 0x08,0x10, 0x0F,0xF0,
     0x01,0x00, 0x01,0x00, 0x01,0x00, 0x3F,0xFC, 0x01,0x00, 0x01,0x00, 0x01,0x00, 0x00,0x00,
@@ -86,14 +96,16 @@ static bool utf8Next(const char *s, size_t &i, uint32_t &cp) {
 
 static void drawGlyph16(DisplaySt7789 &display, int x, int y, const uint8_t *rows, uint16_t fg, uint16_t bg) {
   for (int r = 0; r < 16; ++r) {
-    uint8_t b0 = rows[r * 2 + 0];
-    uint8_t b1 = rows[r * 2 + 1];
+    uint8_t a0 = rows[r * 2 + 0];
+    uint8_t a1 = rows[r * 2 + 1];
+    uint8_t b0 = (g_renderMode & 0x01u) ? a1 : a0;
+    uint8_t b1 = (g_renderMode & 0x01u) ? a0 : a1;
     for (int c = 0; c < 8; ++c) {
-      bool on = (b0 & (0x80 >> c)) != 0;
+      bool on = (g_renderMode & 0x02u) ? ((b0 & (0x01u << c)) != 0) : ((b0 & (0x80u >> c)) != 0);
       display.fillRect(x + c, y + r, 1, 1, on ? fg : bg);
     }
     for (int c = 0; c < 8; ++c) {
-      bool on = (b1 & (0x80 >> c)) != 0;
+      bool on = (g_renderMode & 0x02u) ? ((b1 & (0x01u << c)) != 0) : ((b1 & (0x80u >> c)) != 0);
       display.fillRect(x + 8 + c, y + r, 1, 1, on ? fg : bg);
     }
   }
