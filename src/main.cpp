@@ -984,6 +984,10 @@ void loop() {
       drawStatusBar(ColorBlue);
       setState(AppState::CreatingPayment);
     }
+    if (c == 'o' || c == 'O') {
+      Serial.println("gacha: trigger");
+      gacha.trigger();
+    }
     if (c == '2') {
       Serial.println("test: audio beep 880Hz 800ms");
       bool ok = audioPlayer.playBeep(880, 800);
@@ -1683,6 +1687,7 @@ void loop() {
     bool ok = payment.query(payCreateRes.outTradeNo.c_str(), qres);
     Serial.printf("pay poll ok=%d success=%d state=%s\n", ok ? 1 : 0, qres.success ? 1 : 0, qres.tradeState.c_str());
     if (ok && qres.success) {
+      gacha.trigger();
       setState(AppState::Paid);
       drawUiFrame();
       drawStatusBar(ColorGreen);
@@ -1728,11 +1733,6 @@ void loop() {
       Serial.println("printer: print fallback start");
       aiw::printerPrintResultEnglish(printerSerial, lastStableWeight, lastInputHeightCm, 0.0f, "", "", "");
       Serial.println("printer: print fallback done");
-    }
-    gacha.trigger();
-    while (gacha.isActive() && (millis() - rewardStartMs < 5000)) {
-      gacha.loop();
-      delay(10);
     }
     stableHoldStartMs = 0;
     heightTouchPrev = false;
