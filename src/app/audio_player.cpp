@@ -8,6 +8,8 @@
 #include <math.h>
 #include <Wire.h>
 
+#include "app/i2c_bus.h"
+
 namespace aiw {
 
 static String joinUrl(const char *baseUrl, const String &path) {
@@ -23,18 +25,29 @@ static String joinUrl(const char *baseUrl, const String &path) {
 static bool g_i2sInstalled = false;
 
 static bool i2cWriteReg(uint8_t addr, uint8_t reg, uint8_t val) {
+  if (!aiw::i2cBusLock(40)) return false;
   Wire.beginTransmission(addr);
   Wire.write(reg);
   Wire.write(val);
-  return Wire.endTransmission(true) == 0;
+  bool ok = Wire.endTransmission(true) == 0;
+  aiw::i2cBusUnlock();
+  return ok;
 }
 
 static bool i2cReadReg(uint8_t addr, uint8_t reg, uint8_t &val) {
+  if (!aiw::i2cBusLock(40)) return false;
   Wire.beginTransmission(addr);
   Wire.write(reg);
-  if (Wire.endTransmission(true) != 0) return false;
-  if (Wire.requestFrom((int)addr, 1) != 1) return false;
+  if (Wire.endTransmission(true) != 0) {
+    aiw::i2cBusUnlock();
+    return false;
+  }
+  if (Wire.requestFrom((int)addr, 1) != 1) {
+    aiw::i2cBusUnlock();
+    return false;
+  }
   val = (uint8_t)Wire.read();
+  aiw::i2cBusUnlock();
   return true;
 }
 
@@ -261,6 +274,7 @@ bool AudioPlayer::playWav(const char *baseUrl, const String &audioUrlOrPath, Gac
   if (!enabled_) return false;
   String url = joinUrl(baseUrl, audioUrlOrPath);
   if (!url.length()) return false;
+  Serial.printf("audio: play url=%s\n", url.c_str());
 
   int httpCode = -1;
   HTTPClient http;
@@ -344,11 +358,7 @@ bool AudioPlayer::playWav(const char *baseUrl, const String &audioUrlOrPath, Gac
 
   if (!codecReady_) {
     if (i2cSdaPin_ >= 0 && i2cSclPin_ >= 0) {
-      pinMode(i2cSdaPin_, INPUT_PULLUP);
-      pinMode(i2cSclPin_, INPUT_PULLUP);
-      Wire.begin(i2cSdaPin_, i2cSclPin_);
-      Wire.setClock(100000);
-      Wire.setTimeout(20);
+      aiw::i2cBusInit(i2cSdaPin_, i2cSclPin_, 100000);
       bool mclkFromPin = (mclkPin_ >= 0);
       uint32_t mclkHz = mclkFromPin ? ((uint32_t)sampleRate * 256u) : ((uint32_t)sampleRate * 32u);
       codecReady_ = es8311Init((uint8_t)codecI2cAddr_, (uint32_t)sampleRate, mclkFromPin, mclkHz);
@@ -441,11 +451,7 @@ bool AudioPlayer::playBeep(int freqHz, int ms) {
 
   if (!codecReady_) {
     if (i2cSdaPin_ >= 0 && i2cSclPin_ >= 0) {
-      pinMode(i2cSdaPin_, INPUT_PULLUP);
-      pinMode(i2cSclPin_, INPUT_PULLUP);
-      Wire.begin(i2cSdaPin_, i2cSclPin_);
-      Wire.setClock(100000);
-      Wire.setTimeout(20);
+      aiw::i2cBusInit(i2cSdaPin_, i2cSclPin_, 100000);
       bool mclkFromPin = (mclkPin_ >= 0);
       uint32_t mclkHz = mclkFromPin ? ((uint32_t)sampleRate * 256u) : ((uint32_t)sampleRate * 32u);
       codecReady_ = es8311Init((uint8_t)codecI2cAddr_, (uint32_t)sampleRate, mclkFromPin, mclkHz);

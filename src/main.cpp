@@ -22,6 +22,8 @@
 #include "app/ai_client.h"
 #include "app/zh_bitmaps.h"
 #include "app/mini_font.h"
+#include "app/i2c_bus.h"
+#include "app/receipt_printer.h"
 
 static aiw::DisplaySt7789 display({.mosi = 6, .sclk = 7, .cs = 5, .dc = 4, .rst = 48, .blBox = 45, .blBox3 = 47});
 static aiw::SevenSeg sevenSeg(display);
@@ -343,12 +345,14 @@ static void readTouchMapped(bool &touching, int &x, int &y) {
   static int stableX = 0;
   static int stableY = 0;
   static uint32_t stableMs = 0;
+  static uint8_t stableCount = 0;
 
   aiw::TouchPoint p;
   if (!touchScreen.read(p)) return;
   if (!p.touching) {
     prevTouching = false;
     hasStable = false;
+    stableCount = 0;
     return;
   }
   int tx = p.x;
@@ -384,20 +388,29 @@ static void readTouchMapped(bool &touching, int &x, int &y) {
     stableX = tx;
     stableY = ty;
     stableMs = nowMs;
+    stableCount = 1;
   } else if (!hasStable) {
     hasStable = true;
     stableX = tx;
     stableY = ty;
     stableMs = nowMs;
+    stableCount = 1;
   } else {
     int dx = tx - stableX;
     int dy = ty - stableY;
     if (dx < 0) dx = -dx;
     if (dy < 0) dy = -dy;
-    if ((nowMs - stableMs) < 70 && (dx > 120 || dy > 120)) return;
-    stableX = (stableX * 3 + tx) / 4;
-    stableY = (stableY * 3 + ty) / 4;
-    stableMs = nowMs;
+    if (stableCount < 2) {
+      stableX = (stableX + tx) / 2;
+      stableY = (stableY + ty) / 2;
+      stableMs = nowMs;
+      stableCount = 2;
+    } else {
+      if ((nowMs - stableMs) < 70 && (dx > 120 || dy > 120)) return;
+      stableX = (stableX * 3 + tx) / 4;
+      stableY = (stableY * 3 + ty) / 4;
+      stableMs = nowMs;
+    }
   }
 
   touching = true;
@@ -460,6 +473,32 @@ static bool touchTapEvent(bool touching, int x, int y, uint32_t nowMs, bool &pre
   }
   prev = touching;
   return tapped;
+}
+
+struct TouchHoldState {
+  bool in = false;
+  bool fired = false;
+  uint32_t enterMs = 0;
+};
+
+static bool touchHoldInRect(bool touching, int x, int y, int rx, int ry, int rw, int rh, int pad, uint32_t nowMs, uint32_t holdMs, TouchHoldState &st) {
+  if (!touching) {
+    st.in = false;
+    st.fired = false;
+    st.enterMs = 0;
+    return false;
+  }
+  bool inside = x >= rx - pad && x < rx + rw + pad && y >= ry - pad && y < ry + rh + pad;
+  if (inside && !st.in) {
+    st.enterMs = nowMs;
+    st.fired = false;
+  }
+  st.in = inside;
+  if (inside && !st.fired && (nowMs - st.enterMs) >= holdMs) {
+    st.fired = true;
+    return true;
+  }
+  return false;
 }
 
 static void drawWeight(bool stable, float weight) {
@@ -584,159 +623,10 @@ static void clearQrArea() {
   display.endWrite();
 }
 
-static void printerInit() {
-  uint8_t cmd[] = {0x1B, 0x40};
-  printerSerial.write(cmd, sizeof(cmd));
-}
-
 static void printerSelfTest() {
-  printerInit();
+  aiw::printerInit(printerSerial);
   uint8_t cmd[] = {0x12, 0x54};
   printerSerial.write(cmd, sizeof(cmd));
-}
-
-static void printerPrintLine(const char *s) {
-  if (!s) return;
-  printerSerial.write((const uint8_t *)s, strlen(s));
-  printerSerial.write((uint8_t)0x0D);
-  printerSerial.write((uint8_t)0x0A);
-}
-
-static void printerPrintLine(const String &s) { printerPrintLine(s.c_str()); }
-
-static bool isAsciiText(const String &s) {
-  for (size_t i = 0; i < s.length(); ++i) {
-    uint8_t c = (uint8_t)s[i];
-    if (c < 0x20 || c > 0x7E) return false;
-  }
-  return true;
-}
-
-static void printerWriteEscPosCnInit() {
-  uint8_t cmd0[] = {0x1B, 0x40};
-  printerSerial.write(cmd0, sizeof(cmd0));
-  uint8_t cmd1[] = {0x1C, 0x26};
-  printerSerial.write(cmd1, sizeof(cmd1));
-  uint8_t cmd2[] = {0x1C, 0x43, 0x00};
-  printerSerial.write(cmd2, sizeof(cmd2));
-}
-
-static void printerWriteBytes(const uint8_t *buf, size_t len) {
-  if (!buf || !len) return;
-  printerSerial.write(buf, len);
-}
-
-static void printerWriteAscii(const char *s) {
-  if (!s) return;
-  printerSerial.write((const uint8_t *)s, strlen(s));
-}
-
-static void printerNewLine() {
-  printerSerial.write((uint8_t)0x0D);
-  printerSerial.write((uint8_t)0x0A);
-}
-
-static void printerPrintChineseTestReceipt174_83() {
-  static const uint8_t kTitle[] = {0x41, 0x49, 0xCC, 0xE5, 0xD6, 0xD8, 0xB3, 0xD3};
-  static const uint8_t kHeight[] = {0xC9, 0xED, 0xB8, 0xDF, 0x28, 0x63, 0x6D, 0x29, 0xA3, 0xBA};
-  static const uint8_t kWeight[] = {0xCC, 0xE5, 0xD6, 0xD8, 0x28, 0x6B, 0x67, 0x29, 0xA3, 0xBA};
-  static const uint8_t kBmi[] = {0x42, 0x4D, 0x49, 0xA3, 0xBA};
-  static const uint8_t kCat[] = {0xB7, 0xD6, 0xC0, 0xE0, 0xA3, 0xBA};
-  static const uint8_t kComment[] = {0xCD, 0xC2, 0xB2, 0xDB, 0xA3, 0xBA};
-  static const uint8_t kTip[] = {0xBD, 0xA8, 0xD2, 0xE9, 0xA3, 0xBA};
-  static const uint8_t kOverweight[] = {0xB3, 0xAC, 0xD6, 0xD8};
-  static const uint8_t kCommentText[] = {0xD2, 0xAA, 0xB6, 0xE0, 0xD4, 0xCB, 0xB6, 0xAF, 0xA3, 0xAC, 0xC9, 0xD9, 0xBA, 0xC8, 0xC4, 0xCC, 0xB2, 0xE8, 0xA1, 0xA3};
-
-  printerWriteEscPosCnInit();
-  printerWriteBytes(kTitle, sizeof(kTitle));
-  printerNewLine();
-
-  printerWriteBytes(kHeight, sizeof(kHeight));
-  printerWriteAscii("174");
-  printerNewLine();
-
-  printerWriteBytes(kWeight, sizeof(kWeight));
-  printerWriteAscii("83.0");
-  printerNewLine();
-
-  printerWriteBytes(kBmi, sizeof(kBmi));
-  printerWriteAscii("27.4");
-  printerNewLine();
-
-  printerWriteBytes(kCat, sizeof(kCat));
-  printerWriteBytes(kOverweight, sizeof(kOverweight));
-  printerNewLine();
-
-  printerWriteBytes(kComment, sizeof(kComment));
-  printerWriteBytes(kCommentText, sizeof(kCommentText));
-  printerNewLine();
-
-  printerWriteBytes(kTip, sizeof(kTip));
-  printerWriteBytes(kCommentText, sizeof(kCommentText));
-  printerNewLine();
-
-  printerNewLine();
-  printerNewLine();
-  printerSerial.flush();
-}
-
-static bool printerPrintPayloadBase64(const String &payloadBase64) {
-  if (!payloadBase64.length()) return false;
-  size_t cap = aiw::base64DecodedMaxLen(payloadBase64.length());
-  uint8_t *buf = (uint8_t *)malloc(cap);
-  if (!buf) return false;
-  size_t outLen = 0;
-  bool ok = aiw::base64DecodeToBytes(payloadBase64, buf, cap, outLen);
-  if (ok && outLen > 0) {
-    printerSerial.write(buf, outLen);
-    printerSerial.flush();
-  }
-  free(buf);
-  return ok && outLen > 0;
-}
-
-static void printerFeed(uint8_t lines) {
-  for (uint8_t i = 0; i < lines; ++i) {
-    printerSerial.write((uint8_t)0x0D);
-    printerSerial.write((uint8_t)0x0A);
-  }
-}
-
-static void printerPrintDemo(float weight) {
-  printerInit();
-  printerPrintLine("AI Weight Scale");
-  printerPrintLine("Weight:");
-  printerPrintLine(String(weight, 1));
-  printerFeed(4);
-  printerSerial.flush();
-}
-
-static void printerPrintResult(float weightKg, float heightCm, float bmi, const String &category, const String &comment, const String &tip) {
-  printerInit();
-  printerPrintLine("AI Weight Scale");
-  printerPrintLine("Height(cm):");
-  printerPrintLine(String(heightCm, 0));
-  printerPrintLine("Weight(kg):");
-  printerPrintLine(String(weightKg, 1));
-  printerPrintLine("BMI:");
-  printerPrintLine(String(bmi, 1));
-  if (category.length() && isAsciiText(category)) {
-    printerPrintLine("Category:");
-    printerPrintLine(category);
-  }
-  if (comment.length() && isAsciiText(comment)) {
-    printerPrintLine("Comment:");
-    printerPrintLine(comment);
-  }
-  if (tip.length() && isAsciiText(tip)) {
-    printerPrintLine("Tip:");
-    printerPrintLine(tip);
-  }
-  if ((category.length() && !isAsciiText(category)) || (comment.length() && !isAsciiText(comment)) || (tip.length() && !isAsciiText(tip))) {
-    printerPrintLine("CN text omitted");
-  }
-  printerFeed(4);
-  printerSerial.flush();
 }
 
 static void printerBegin() {
@@ -800,11 +690,11 @@ static void printerAutoScan() {
       printerBaud = kPrinterBaudOptions[bi];
       printerBegin();
 
-      printerInit();
+      aiw::printerInit(printerSerial);
       String line = String("TEST tx=") + printerTxPin + " rx=" + printerRxPin + " baud=" + printerBaud;
-      printerPrintLine(line);
-      printerPrintLine("If you can read this, stop scan.");
-      printerFeed(3);
+      aiw::printerPrintLine(printerSerial, line);
+      aiw::printerPrintLine(printerSerial, "If you can read this, stop scan.");
+      aiw::printerFeed(printerSerial, 3);
       printerSerial.flush();
       delay(600);
     }
@@ -929,11 +819,14 @@ static bool postJson(const String &url, const String &body, int &outCode, String
 void setup() {
   Serial.begin(115200);
   delay(200);
+  aiw::i2cBusInit(aiw::config::I2cSdaPin, aiw::config::I2cSclPin, 100000);
 
   display.begin();
   aiw::setZhRenderMode(3);
   drawUiFrame();
   drawHeightPicker();
+  uiDirty = false;
+  heightTouchPrev = false;
 
   wifi.begin();
   bool ok = wifi.connect(aiw::config::WifiSsid, aiw::config::WifiPassword, 15000);
@@ -1060,15 +953,15 @@ void loop() {
     if (c == 's' || c == 'S') {
       Serial.println("printer: selftest");
       printerSelfTest();
-      printerFeed(2);
+      aiw::printerFeed(printerSerial, 2);
     }
     if (c == 'P') {
       Serial.println("printer: demo");
-      printerPrintDemo(lastShownWeight);
+      aiw::printerPrintDemo(printerSerial, lastShownWeight);
     }
     if (c == 'f' || c == 'F') {
       Serial.println("printer: feed");
-      printerFeed(6);
+      aiw::printerFeed(printerSerial, 6);
     }
     if (c == 'x' || c == 'X') {
       Serial.println("printer: swap tx/rx pins");
@@ -1090,10 +983,6 @@ void loop() {
       lastStableWeight = lastShownWeight;
       drawStatusBar(ColorBlue);
       setState(AppState::CreatingPayment);
-    }
-    if (c == '1') {
-      Serial.println("test: local cn receipt 174/83");
-      printerPrintChineseTestReceipt174_83();
     }
     if (c == '2') {
       Serial.println("test: audio beep 880Hz 800ms");
@@ -1318,22 +1207,35 @@ void loop() {
     int tx = 0;
     int ty = 0;
     readTouchMapped(touching, tx, ty);
+    static uint8_t heightTouchFrames = 0;
     if (touching) {
-      int px = tx - 1;
-      int py = ty - 1;
-      if (px < 0) px = 0;
-      if (py < 0) py = 0;
-      int pw = 3;
-      int ph = 3;
-      if (px + pw > aiw::DisplaySt7789::Width) pw = aiw::DisplaySt7789::Width - px;
-      if (py + ph > aiw::DisplaySt7789::Height) ph = aiw::DisplaySt7789::Height - py;
-      display.beginWrite();
-      display.fillRect(px, py, pw, ph, ColorBlack);
-      display.endWrite();
+      if (heightTouchFrames < 255) heightTouchFrames++;
+    } else {
+      heightTouchFrames = 0;
+    }
+    if (touching) {
+      if (heightTouchFrames >= 2) {
+        int px = tx - 1;
+        int py = ty - 1;
+        if (px < 0) px = 0;
+        if (py < 0) py = 0;
+        int pw = 3;
+        int ph = 3;
+        if (px + pw > aiw::DisplaySt7789::Width) pw = aiw::DisplaySt7789::Width - px;
+        if (py + ph > aiw::DisplaySt7789::Height) ph = aiw::DisplaySt7789::Height - py;
+        display.beginWrite();
+        display.fillRect(px, py, pw, ph, ColorBlack);
+        display.endWrite();
+      }
     }
 
     uint32_t now = millis();
     bool inSlider = touching && (tx >= HeightSliderX && tx < HeightSliderX + HeightSliderW && ty >= HeightSliderY - 16 && ty < HeightSliderY + HeightSliderH + 16);
+    static bool heightTouchLock = false;
+    static int heightLockX = 0;
+    static int heightLockY = 0;
+    static int heightLockW = 0;
+    static int heightLockH = 0;
     if (touching && !heightTouchPrev) {
       heightTouchStartX = tx;
       heightTouchStartY = ty;
@@ -1341,6 +1243,11 @@ void loop() {
       heightTouchLastY = ty;
       heightTouchStartMs = now;
       heightTouchStartZone = 0;
+      heightTouchLock = false;
+      heightLockX = 0;
+      heightLockY = 0;
+      heightLockW = 0;
+      heightLockH = 0;
       if (inSlider) {
         heightTouchStartZone = 4;
       } else if (tx >= 80 && tx < 240 && ty >= 46 && ty < HeightSliderY - 8) {
@@ -1351,8 +1258,35 @@ void loop() {
         else if (tx >= HeightNextX && tx < HeightNextX + HeightNextW) heightTouchStartZone = 2;
         else if (tx >= HeightRightX && tx < HeightRightX + HeightRightW) heightTouchStartZone = 3;
       }
+      if (heightTouchStartZone == 1) {
+        heightTouchLock = true;
+        heightLockX = HeightLeftX;
+        heightLockY = HeightBtnY;
+        heightLockW = HeightLeftW;
+        heightLockH = HeightBtnH;
+      } else if (heightTouchStartZone == 2) {
+        heightTouchLock = true;
+        heightLockX = HeightNextX;
+        heightLockY = HeightBtnY;
+        heightLockW = HeightNextW;
+        heightLockH = HeightBtnH;
+      } else if (heightTouchStartZone == 3) {
+        heightTouchLock = true;
+        heightLockX = HeightRightX;
+        heightLockY = HeightBtnY;
+        heightLockW = HeightRightW;
+        heightLockH = HeightBtnH;
+      }
     }
     if (touching) {
+      if (heightTouchLock) {
+        int pad = 30;
+        bool inPad = tx >= heightLockX - pad && tx < heightLockX + heightLockW + pad && ty >= heightLockY - pad && ty < heightLockY + heightLockH + pad;
+        if (!inPad) {
+          tx = heightTouchLastX;
+          ty = heightTouchLastY;
+        }
+      }
       heightTouchLastX = tx;
       heightTouchLastY = ty;
       if (inSlider) {
@@ -1381,7 +1315,7 @@ void loop() {
       int rawDy = heightTouchLastY - heightTouchStartY;
       uint32_t dur = now - heightTouchStartMs;
 
-      bool isTap = dur <= 350 && dx <= 12 && dy <= 12;
+      bool isTap = dur <= 650 && dx <= 32 && dy <= 32;
       bool isSwipe = dur <= 700 && ((dx >= 60 && dy <= 35) || (dy >= 60 && dx <= 35));
 
       if (isSwipe) {
@@ -1396,7 +1330,7 @@ void loop() {
         if (currentHeightCm < 120) currentHeightCm = 120;
         heightChanged = true;
       } else if (isTap) {
-        bool tapInSlider = (heightTouchLastX >= HeightSliderX && heightTouchLastX < HeightSliderX + HeightSliderW && heightTouchLastY >= HeightSliderY - 16 && heightTouchLastY < HeightSliderY + HeightSliderH + 16);
+        bool tapInSlider = (heightTouchStartZone == 4) || (heightTouchLastX >= HeightSliderX && heightTouchLastX < HeightSliderX + HeightSliderW && heightTouchLastY >= HeightSliderY - 16 && heightTouchLastY < HeightSliderY + HeightSliderH + 16);
         if (tapInSlider) {
           int pos = heightTouchLastX - HeightSliderX;
           if (pos < 0) pos = 0;
@@ -1477,6 +1411,20 @@ void loop() {
     int tapX = 0;
     int tapY = 0;
     uint32_t nowTap = millis();
+    static TouchHoldState weighHoldTare;
+    static TouchHoldState weighHoldBack;
+    bool holdTare = touchHoldInRect(touching, tx, ty, WeighTareX, WeighBtnY, WeighTareW, WeighBtnH, 18, nowTap, 120, weighHoldTare);
+    bool holdBack = touchHoldInRect(touching, tx, ty, WeighBackX, WeighBtnY, WeighBackW, WeighBtnH, 18, nowTap, 120, weighHoldBack);
+    if (holdTare) {
+      tryTareNow();
+      stableHoldStartMs = 0;
+    } else if (holdBack) {
+      stableHoldStartMs = 0;
+      heightTouchPrev = false;
+      setState(AppState::InputHeight);
+      delay(10);
+      return;
+    }
     bool tapped = touchTapEvent(touching, tx, ty, nowTap, uiTouchPrev, uiTouchStartX, uiTouchStartY, uiTouchLastX, uiTouchLastY, uiTouchStartMs, tapX, tapY);
     if (tapped) {
       auto inRect = [&](int px, int py, int rx, int ry, int rw, int rh) -> bool { return px >= rx && px < rx + rw && py >= ry && py < ry + rh; };
@@ -1696,21 +1644,28 @@ void loop() {
     bool touching = false;
     int tx = 0;
     int ty = 0;
-    readTouchMapped(touching, tx, ty);
-    int tapX = 0;
-    int tapY = 0;
-    uint32_t nowTap = millis();
-    bool tapped = touchTapEvent(touching, tx, ty, nowTap, uiTouchPrev, uiTouchStartX, uiTouchStartY, uiTouchLastX, uiTouchLastY, uiTouchStartMs, tapX, tapY);
-    if (tapped) {
-      auto inRect = [&](int px, int py, int rx, int ry, int rw, int rh) -> bool { return px >= rx && px < rx + rw && py >= ry && py < ry + rh; };
-      auto inRectPad = [&](int px, int py, int rx, int ry, int rw, int rh, int pad) -> bool { return px >= rx - pad && px < rx + rw + pad && py >= ry - pad && py < ry + rh + pad; };
-      bool inCancel = inRectPad(tapX, tapY, PayCancelX, PayCancelY, PayCancelW, PayCancelH, 14) || inRectPad(uiTouchStartX, uiTouchStartY, PayCancelX, PayCancelY, PayCancelW, PayCancelH, 14);
-      if (inCancel) {
+      readTouchMapped(touching, tx, ty);
+      int tapX = 0;
+      int tapY = 0;
+      uint32_t nowTap = millis();
+      static TouchHoldState payHoldCancel;
+      bool holdCancel = touchHoldInRect(touching, tx, ty, PayCancelX, PayCancelY, PayCancelW, PayCancelH, 18, nowTap, 120, payHoldCancel);
+      if (holdCancel) {
         setState(AppState::Weighing);
         delay(10);
         return;
       }
-    }
+      bool tapped = touchTapEvent(touching, tx, ty, nowTap, uiTouchPrev, uiTouchStartX, uiTouchStartY, uiTouchLastX, uiTouchLastY, uiTouchStartMs, tapX, tapY);
+      if (tapped) {
+        auto inRect = [&](int px, int py, int rx, int ry, int rw, int rh) -> bool { return px >= rx && px < rx + rw && py >= ry && py < ry + rh; };
+        auto inRectPad = [&](int px, int py, int rx, int ry, int rw, int rh, int pad) -> bool { return px >= rx - pad && px < rx + rw + pad && py >= ry - pad && py < ry + rh + pad; };
+        bool inCancel = inRectPad(tapX, tapY, PayCancelX, PayCancelY, PayCancelW, PayCancelH, 14) || inRectPad(uiTouchStartX, uiTouchStartY, PayCancelX, PayCancelY, PayCancelW, PayCancelH, 14);
+        if (inCancel) {
+          setState(AppState::Weighing);
+          delay(10);
+          return;
+        }
+      }
 
     if (!wifi.isConnected()) {
       drawWifiStatus();
@@ -1759,10 +1714,10 @@ void loop() {
       }
       bool printed = false;
       if (rewardAi.printPayloadBase64.length()) {
-        printed = printerPrintPayloadBase64(rewardAi.printPayloadBase64);
+        printed = aiw::printerPrintPayloadBase64(printerSerial, rewardAi.printPayloadBase64);
       }
       if (!printed) {
-        printerPrintResult(lastStableWeight, lastInputHeightCm, rewardAi.bmi, rewardAi.category, rewardAi.comment, rewardAi.tip);
+        aiw::printerPrintResultEnglish(printerSerial, lastStableWeight, lastInputHeightCm, rewardAi.bmi, rewardAi.category, rewardAi.comment, rewardAi.tip);
       }
       Serial.println("printer: print result done");
       uint32_t waitStart = millis();
@@ -1771,7 +1726,7 @@ void loop() {
       }
     } else {
       Serial.println("printer: print fallback start");
-      printerPrintResult(lastStableWeight, lastInputHeightCm, 0.0f, "", "", "");
+      aiw::printerPrintResultEnglish(printerSerial, lastStableWeight, lastInputHeightCm, 0.0f, "", "", "");
       Serial.println("printer: print fallback done");
     }
     gacha.trigger();
@@ -1799,6 +1754,9 @@ void loop() {
       int tapX = 0;
       int tapY = 0;
       uint32_t nowTap = millis();
+      static TouchHoldState paidHoldRestart;
+      bool holdRestart = touchHoldInRect(touching, tx, ty, 90, FooterY, 140, FooterH, 18, nowTap, 120, paidHoldRestart);
+      if (holdRestart) break;
       bool tapped = touchTapEvent(touching, tx, ty, nowTap, uiTouchPrev, uiTouchStartX, uiTouchStartY, uiTouchLastX, uiTouchLastY, uiTouchStartMs, tapX, tapY);
       if (tapped) {
         auto inRect = [&](int px, int py, int rx, int ry, int rw, int rh) -> bool { return px >= rx && px < rx + rw && py >= ry && py < ry + rh; };
