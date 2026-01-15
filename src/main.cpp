@@ -74,6 +74,10 @@ static constexpr uint16_t ColorGray = 0xC618;
 
 static const char kZhSelectHeight[] = "\xE9\x80\x89\xE6\x8B\xA9\xE8\xBA\xAB\xE9\xAB\x98";
 static const char kZhScanPay[] = "\xE6\x89\xAB\xE7\xA0\x81\xE6\x94\xAF\xE4\xBB\x98";
+static const char kZhTare[] = "去皮";
+static const char kZhBack[] = "返回";
+static const char kZhCancel[] = "取消";
+static const char kZhNext[] = "下一步";
 
 static constexpr int WeightX = 10;
 static constexpr int WeightY = 10;
@@ -311,6 +315,42 @@ static void fillRoundRect(int x, int y, int w, int h, int r, uint16_t color) {
 }
 
 static void drawButton(int x, int y, int w, int h, uint16_t bg, const char *label) {
+  auto utf8Next = [](const char *s, size_t &i, uint32_t &cp) -> bool {
+    uint8_t c = (uint8_t)s[i];
+    if (c == 0) return false;
+    if (c < 0x80) {
+      cp = c;
+      i += 1;
+      return true;
+    }
+    if ((c & 0xE0) == 0xC0) {
+      uint8_t c1 = (uint8_t)s[i + 1];
+      if ((c1 & 0xC0) != 0x80) {
+        cp = 0xFFFD;
+        i += 1;
+        return true;
+      }
+      cp = ((uint32_t)(c & 0x1F) << 6) | (uint32_t)(c1 & 0x3F);
+      i += 2;
+      return true;
+    }
+    if ((c & 0xF0) == 0xE0) {
+      uint8_t c1 = (uint8_t)s[i + 1];
+      uint8_t c2 = (uint8_t)s[i + 2];
+      if (((c1 & 0xC0) != 0x80) || ((c2 & 0xC0) != 0x80)) {
+        cp = 0xFFFD;
+        i += 1;
+        return true;
+      }
+      cp = ((uint32_t)(c & 0x0F) << 12) | ((uint32_t)(c1 & 0x3F) << 6) | (uint32_t)(c2 & 0x3F);
+      i += 3;
+      return true;
+    }
+    cp = 0xFFFD;
+    i += 1;
+    return true;
+  };
+
   int r = 10;
   uint16_t border = 0x7BEF;
   fillRoundRect(x, y, w, h, r, border);
@@ -320,12 +360,36 @@ static void drawButton(int x, int y, int w, int h, uint16_t bg, const char *labe
     display.fillRect(x + 4, y + h - 6, w - 8, 2, 0xAD55);
   }
   if (label && label[0]) {
-    int len = (int)strlen(label);
-    int scale = 2;
-    int tw = len * 6 * scale;
-    int tx = x + (w - tw) / 2;
-    int ty = y + (h - 7 * scale) / 2;
-    aiw::drawText5x7(display, tx, ty, label, ColorBlack, bg, scale);
+    bool hasNonAscii = false;
+    for (const char *p = label; *p; ++p) {
+      if ((uint8_t)(*p) >= 0x80u) {
+        hasNonAscii = true;
+        break;
+      }
+    }
+    if (hasNonAscii) {
+      size_t i = 0;
+      int chars = 0;
+      while (true) {
+        uint32_t cp = 0;
+        if (!utf8Next(label, i, cp)) break;
+        chars++;
+      }
+      int tw = chars * 16;
+      int tx = x + (w - tw) / 2;
+      int ty = y + (h - 16) / 2;
+      uint8_t prevMode = aiw::zhRenderMode();
+      aiw::setZhRenderMode(0);
+      aiw::drawZhText16(display, tx, ty, label, ColorBlack, bg);
+      aiw::setZhRenderMode(prevMode);
+    } else {
+      int len = (int)strlen(label);
+      int scale = 2;
+      int tw = len * 6 * scale;
+      int tx = x + (w - tw) / 2;
+      int ty = y + (h - 7 * scale) / 2;
+      aiw::drawText5x7(display, tx, ty, label, ColorBlack, bg, scale);
+    }
   }
 }
 
@@ -352,15 +416,15 @@ static void drawHeaderScanPay() {
 static void drawWeighFooter() {
   display.beginWrite();
   display.fillRect(2, FooterY, aiw::DisplaySt7789::Width - 4, FooterH, ColorWhite);
-  drawButton(WeighTareX, WeighBtnY, WeighTareW, WeighBtnH, 0xE7FF, "TARE");
-  drawButton(WeighBackX, WeighBtnY, WeighBackW, WeighBtnH, 0xF7DE, "BACK");
+  drawButton(WeighTareX, WeighBtnY, WeighTareW, WeighBtnH, 0xE7FF, kZhTare);
+  drawButton(WeighBackX, WeighBtnY, WeighBackW, WeighBtnH, 0xF7DE, kZhBack);
   display.endWrite();
 }
 
 static void drawPayFooter() {
   display.beginWrite();
   display.fillRect(2, FooterY, aiw::DisplaySt7789::Width - 4, FooterH, ColorWhite);
-  drawButton(PayCancelX, PayCancelY, PayCancelW, PayCancelH, 0xF7DE, "CANCEL");
+  drawButton(PayCancelX, PayCancelY, PayCancelW, PayCancelH, 0xF7DE, kZhCancel);
   display.endWrite();
 }
 
@@ -907,7 +971,7 @@ static void drawHeightPicker() {
 
   drawButton(HeightLeftX, HeightBtnY, HeightLeftW, HeightBtnH, 0xF7DE, "<");
 
-  drawButton(HeightNextX, HeightBtnY, HeightNextW, HeightBtnH, 0xE7FF, "NEXT");
+  drawButton(HeightNextX, HeightBtnY, HeightNextW, HeightBtnH, 0xE7FF, kZhNext);
 
   drawButton(HeightRightX, HeightBtnY, HeightRightW, HeightBtnH, 0xF7DE, ">");
 
@@ -1387,6 +1451,19 @@ void loop() {
       lastStableWeight = lastShownWeight;
       drawStatusBar(ColorBlue);
       setState(AppState::CreatingPayment);
+    }
+    if (c == 'w' || c == 'W') {
+      if (state == AppState::Weighing) {
+        lastInputHeightCm = (float)currentHeightCm;
+        lastStableWeight = 80.0f;
+        lastShownWeight = 80.0f;
+        Serial.printf("force pay 80kg: height=%d\n", currentHeightCm);
+        drawWeight(true, 80.0f);
+        drawStatusBar(ColorBlue);
+        setState(AppState::CreatingPayment);
+      } else {
+        Serial.println("force pay 80kg: ignored (not in weighing)");
+      }
     }
     if (c == 'o' || c == 'O') {
       Serial.println("gacha: trigger");
@@ -2223,32 +2300,63 @@ void loop() {
     rewardAi = aiw::AiWithTtsResult{};
     rewardAiOk = aiClient.getCommentWithTts(lastStableWeight, lastInputHeightCm, rewardAi);
     Serial.printf("ai ok=%d bmi=%.1f cat=%s audio=%s\n", rewardAiOk ? 1 : 0, rewardAi.bmi, rewardAi.category.c_str(), rewardAi.audioUrl.c_str());
+
+    bool audioStarted = false;
     if (rewardAiOk) {
       drawHeaderLabel("PRINT AUDIO");
-      Serial.println("printer: print result start");
-      if (!rewardAi.audioUrl.length()) {
-        Serial.println("tts audioUrl empty (backend may be returning tts:null)");
-      }
-      bool audioStarted = false;
       if (rewardAi.audioUrl.length()) {
         audioStarted = audioPlayer.playWavAsync(aiw::config::BackendBaseUrl, rewardAi.audioUrl);
+      } else {
+        Serial.println("tts audioUrl empty (backend may be returning tts:null)");
       }
+
+      Serial.println("printer: print start");
       bool printed = false;
       if (rewardAi.printPayloadBase64.length()) {
         printed = aiw::printerPrintPayloadBase64(printerSerial, rewardAi.printPayloadBase64);
       }
       if (!printed) {
-        aiw::printerPrintResultEnglish(printerSerial, lastStableWeight, lastInputHeightCm, rewardAi.bmi, rewardAi.category, rewardAi.comment, rewardAi.tip);
+        aiw::printerInit(printerSerial);
+        aiw::printerPrintLine(printerSerial, "AI体重秤");
+        aiw::printerPrintLine(printerSerial, "身高(cm):");
+        aiw::printerPrintLine(printerSerial, String(lastInputHeightCm, 0));
+        aiw::printerPrintLine(printerSerial, "体重(kg):");
+        aiw::printerPrintLine(printerSerial, String(lastStableWeight, 1));
+        aiw::printerPrintLine(printerSerial, "BMI:");
+        aiw::printerPrintLine(printerSerial, String(rewardAi.bmi, 1));
+        if (rewardAi.category.length()) {
+          aiw::printerPrintLine(printerSerial, "分类:");
+          aiw::printerPrintLine(printerSerial, rewardAi.category);
+        }
+        if (rewardAi.comment.length()) {
+          aiw::printerPrintLine(printerSerial, "评论:");
+          aiw::printerPrintLine(printerSerial, rewardAi.comment);
+        }
+        if (rewardAi.tip.length()) {
+          aiw::printerPrintLine(printerSerial, "建议:");
+          aiw::printerPrintLine(printerSerial, rewardAi.tip);
+        }
+        aiw::printerFeed(printerSerial, 4);
+        printerSerial.flush();
       }
-      Serial.println("printer: print result done");
-      uint32_t waitStart = millis();
-      while (audioStarted && audioPlayer.isPlaying() && (millis() - waitStart < 25000)) {
-        delay(10);
-      }
+      Serial.println("printer: print done");
     } else {
       Serial.println("printer: print fallback start");
-      aiw::printerPrintResultEnglish(printerSerial, lastStableWeight, lastInputHeightCm, 0.0f, "", "", "");
+      aiw::printerInit(printerSerial);
+      aiw::printerPrintLine(printerSerial, "AI体重秤");
+      aiw::printerPrintLine(printerSerial, "身高(cm):");
+      aiw::printerPrintLine(printerSerial, String(lastInputHeightCm, 0));
+      aiw::printerPrintLine(printerSerial, "体重(kg):");
+      aiw::printerPrintLine(printerSerial, String(lastStableWeight, 1));
+      aiw::printerPrintLine(printerSerial, "AI生成失败");
+      aiw::printerFeed(printerSerial, 4);
+      printerSerial.flush();
       Serial.println("printer: print fallback done");
+    }
+
+    uint32_t audioWaitStart = millis();
+    while (audioStarted && audioPlayer.isPlaying() && (millis() - audioWaitStart < 25000)) {
+      delay(10);
     }
     stableHoldStartMs = 0;
     heightTouchPrev = false;
@@ -2256,39 +2364,8 @@ void loop() {
     drawUiFrame();
     drawHeaderLabel("DONE");
     drawStatusBar(ColorGreen);
-    display.beginWrite();
-    drawButton(90, FooterY, 140, FooterH, 0xE7FF, "RESTART");
-    display.endWrite();
-
-    uiTouchPrev = false;
-    uint32_t waitStart = millis();
-    while (millis() - waitStart < 8000) {
-      bool touching = false;
-      int tx = 0;
-      int ty = 0;
-      readTouchMapped(touching, tx, ty);
-      int tapX = 0;
-      int tapY = 0;
-      uint32_t nowTap = millis();
-      static TouchHoldState paidHoldRestart;
-      bool holdRestart = touchHoldInRect(touching, tx, ty, 90, FooterY, 140, FooterH, 18, nowTap, 120, paidHoldRestart);
-      if (holdRestart) break;
-      bool tapped = touchTapEvent(touching, tx, ty, nowTap, uiTouchPrev, uiTouchStartX, uiTouchStartY, uiTouchLastX, uiTouchLastY, uiTouchStartMs, tapX, tapY);
-      if (tapped) {
-        auto inRect = [&](int px, int py, int rx, int ry, int rw, int rh) -> bool { return px >= rx && px < rx + rw && py >= ry && py < ry + rh; };
-        auto inRectPad = [&](int px, int py, int rx, int ry, int rw, int rh, int pad) -> bool { return px >= rx - pad && px < rx + rw + pad && py >= ry - pad && py < ry + rh + pad; };
-        bool inRestart = inRectPad(tapX, tapY, 90, FooterY, 140, FooterH, 14) || inRectPad(uiTouchStartX, uiTouchStartY, 90, FooterY, 140, FooterH, 14);
-        if (inRestart) break;
-      }
-      bool sp = false;
-      bool lp = false;
-      touchBtn.update(sp, lp);
-      if (sp || lp) break;
-      delay(10);
-    }
-
-    uiTouchPrev = false;
     setState(AppState::InputHeight);
+    delay(1000);
     return;
   }
 }
