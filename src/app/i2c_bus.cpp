@@ -20,14 +20,27 @@ static void ensureMutex() {
 
 void i2cBusInit(int sda, int scl, uint32_t freqHz) {
   ensureMutex();
-  if (g_inited) return;
-  g_sda = sda;
-  g_scl = scl;
-  g_freq = freqHz ? freqHz : 100000;
-  Wire.begin(g_sda, g_scl);
-  Wire.setClock(g_freq);
+  uint32_t freq = freqHz ? freqHz : 100000;
+  if (!g_inited) {
+    g_sda = sda;
+    g_scl = scl;
+    g_freq = freq;
+    Wire.begin(g_sda, g_scl);
+    Wire.setClock(g_freq);
+    Wire.setTimeOut(20);
+    g_inited = true;
+    return;
+  }
+  if (sda >= 0 && scl >= 0 && (sda != g_sda || scl != g_scl)) {
+    g_sda = sda;
+    g_scl = scl;
+    Wire.begin(g_sda, g_scl);
+  }
+  if (freq != g_freq) {
+    g_freq = freq;
+    Wire.setClock(g_freq);
+  }
   Wire.setTimeOut(20);
-  g_inited = true;
 }
 
 bool i2cBusLock(uint32_t timeoutMs) {
@@ -43,4 +56,3 @@ void i2cBusUnlock() {
 }
 
 }  // namespace aiw
-

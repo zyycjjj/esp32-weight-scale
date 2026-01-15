@@ -95,7 +95,7 @@ static constexpr int FooterY = aiw::DisplaySt7789::Height - FooterH - 4;
 static constexpr int HeightSliderX = 30;
 static constexpr int HeightSliderY = 132;
 static constexpr int HeightSliderW = 260;
-static constexpr int HeightSliderH = 20;
+static constexpr int HeightSliderH = 26;
 
 static constexpr int HeightBtnY = 164;
 static constexpr int HeightBtnH = 68;
@@ -346,6 +346,12 @@ static void readTouchMapped(bool &touching, int &x, int &y) {
   static int stableY = 0;
   static uint32_t stableMs = 0;
   static uint8_t stableCount = 0;
+  static uint8_t histN = 0;
+  static int histX[5];
+  static int histY[5];
+  static uint8_t jumpPending = 0;
+  static int jumpX = 0;
+  static int jumpY = 0;
 
   aiw::TouchPoint p;
   if (!touchScreen.read(p)) return;
@@ -353,6 +359,8 @@ static void readTouchMapped(bool &touching, int &x, int &y) {
     prevTouching = false;
     hasStable = false;
     stableCount = 0;
+    histN = 0;
+    jumpPending = 0;
     return;
   }
   int tx = p.x;
@@ -381,6 +389,36 @@ static void readTouchMapped(bool &touching, int &x, int &y) {
   if (ty >= aiw::DisplaySt7789::Height) ty = aiw::DisplaySt7789::Height - 1;
 
   uint32_t nowMs = millis();
+  if (histN < 5) {
+    histX[histN] = tx;
+    histY[histN] = ty;
+    histN++;
+  } else {
+    for (int i = 0; i < 4; ++i) {
+      histX[i] = histX[i + 1];
+      histY[i] = histY[i + 1];
+    }
+    histX[4] = tx;
+    histY[4] = ty;
+  }
+  auto median5 = [](const int *a, uint8_t n) -> int {
+    int b[5];
+    for (uint8_t i = 0; i < n; ++i) b[i] = a[i];
+    for (uint8_t i = 0; i < n; ++i) {
+      for (uint8_t j = (uint8_t)(i + 1); j < n; ++j) {
+        if (b[j] < b[i]) {
+          int t = b[i];
+          b[i] = b[j];
+          b[j] = t;
+        }
+      }
+    }
+    return b[n / 2];
+  };
+  int fx = median5(histX, histN);
+  int fy = median5(histY, histN);
+  tx = fx;
+  ty = fy;
 
   if (!prevTouching) {
     prevTouching = true;
@@ -389,12 +427,14 @@ static void readTouchMapped(bool &touching, int &x, int &y) {
     stableY = ty;
     stableMs = nowMs;
     stableCount = 1;
+    jumpPending = 0;
   } else if (!hasStable) {
     hasStable = true;
     stableX = tx;
     stableY = ty;
     stableMs = nowMs;
     stableCount = 1;
+    jumpPending = 0;
   } else {
     int dx = tx - stableX;
     int dy = ty - stableY;
@@ -405,10 +445,39 @@ static void readTouchMapped(bool &touching, int &x, int &y) {
       stableY = (stableY + ty) / 2;
       stableMs = nowMs;
       stableCount = 2;
+      jumpPending = 0;
     } else {
-      if ((nowMs - stableMs) < 70 && (dx > 120 || dy > 120)) return;
-      stableX = (stableX * 3 + tx) / 4;
-      stableY = (stableY * 3 + ty) / 4;
+      int jumpTh = 28;
+      if (dx > jumpTh || dy > jumpTh) {
+        if (!jumpPending) {
+          jumpPending = 1;
+          jumpX = tx;
+          jumpY = ty;
+          touching = true;
+          x = stableX;
+          y = stableY;
+          return;
+        }
+        int jdx = tx - jumpX;
+        int jdy = ty - jumpY;
+        if (jdx < 0) jdx = -jdx;
+        if (jdy < 0) jdy = -jdy;
+        if (jdx <= 18 && jdy <= 18) {
+          stableX = (stableX + tx) / 2;
+          stableY = (stableY + ty) / 2;
+          stableMs = nowMs;
+        }
+        jumpX = tx;
+        jumpY = ty;
+        jumpPending = 1;
+        touching = true;
+        x = stableX;
+        y = stableY;
+        return;
+      }
+      jumpPending = 0;
+      stableX = (stableX * 7 + tx) / 8;
+      stableY = (stableY * 7 + ty) / 8;
       stableMs = nowMs;
     }
   }
@@ -437,7 +506,7 @@ static bool touchTapInRect(bool touching, int x, int y, int rx, int ry, int rw, 
     if (dx < 0) dx = -dx;
     if (dy < 0) dy = -dy;
     uint32_t dur = nowMs - startMs;
-    bool isTap = dur <= 650 && dx <= 32 && dy <= 32;
+    bool isTap = dur <= 650 && dx <= 45 && dy <= 45;
     bool in = ((lx >= rx && lx < rx + rw && ly >= ry && ly < ry + rh) || (sx >= rx && sx < rx + rw && sy >= ry && sy < ry + rh));
     tapped = isTap && in;
   }
@@ -464,7 +533,7 @@ static bool touchTapEvent(bool touching, int x, int y, uint32_t nowMs, bool &pre
     if (dx < 0) dx = -dx;
     if (dy < 0) dy = -dy;
     uint32_t dur = nowMs - startMs;
-    bool isTap = dur <= 650 && dx <= 32 && dy <= 32;
+    bool isTap = dur <= 650 && dx <= 45 && dy <= 45;
     if (isTap) {
       tapped = true;
       tapX = (sx + lx) / 2;
@@ -842,6 +911,11 @@ void setup() {
   touchBtn.begin(BootPin, aiw::config::TouchPin, aiw::config::TouchThreshold);
   touchScreen.begin(aiw::config::I2cSdaPin, aiw::config::I2cSclPin, 0);
   bool touchOk = touchScreen.detect();
+  if (!touchOk) {
+    aiw::i2cBusInit(aiw::config::I2cSdaPin, aiw::config::I2cSclPin, 400000);
+    touchScreen.begin(aiw::config::I2cSdaPin, aiw::config::I2cSclPin, 0);
+    touchOk = touchScreen.detect();
+  }
   Serial.printf("touch gt911 detect=%d sda=%d scl=%d maxX=%u maxY=%u\n", touchOk ? 1 : 0, aiw::config::I2cSdaPin, aiw::config::I2cSclPin, (unsigned)touchScreen.maxX(), (unsigned)touchScreen.maxY());
   if (!touchOk) {
     Serial.println("touch i2c scan:");
@@ -883,10 +957,10 @@ void setup() {
 }
 
 void loop() {
-  {
+  if (touchRawLogEnabled) {
     aiw::TouchPoint p;
     bool ok = touchScreen.read(p);
-    if (touchRawLogEnabled && ok && p.touching) {
+    if (ok && p.touching) {
       uint32_t now = millis();
       if (now - lastTouchLogMs > 200) {
         lastTouchLogMs = now;
@@ -1234,7 +1308,7 @@ void loop() {
     }
 
     uint32_t now = millis();
-    bool inSlider = touching && (tx >= HeightSliderX && tx < HeightSliderX + HeightSliderW && ty >= HeightSliderY - 16 && ty < HeightSliderY + HeightSliderH + 16);
+    bool inSlider = touching && (tx >= HeightSliderX && tx < HeightSliderX + HeightSliderW && ty >= HeightSliderY - 24 && ty < HeightSliderY + HeightSliderH + 24);
     static bool heightTouchLock = false;
     static int heightLockX = 0;
     static int heightLockY = 0;
@@ -1252,15 +1326,19 @@ void loop() {
       heightLockY = 0;
       heightLockW = 0;
       heightLockH = 0;
+    }
+    if (touching && heightTouchFrames >= 2 && heightTouchStartZone == 0) {
       if (inSlider) {
         heightTouchStartZone = 4;
-      } else if (tx >= 80 && tx < 240 && ty >= 46 && ty < HeightSliderY - 8) {
+      } else if (tx >= 70 && tx < 250 && ty >= 46 && ty < HeightSliderY - 6) {
         heightTouchStartZone = 5;
       }
-      if (ty >= HeightBtnY && ty < HeightBtnY + HeightBtnH) {
-        if (tx >= HeightLeftX && tx < HeightLeftX + HeightLeftW) heightTouchStartZone = 1;
-        else if (tx >= HeightNextX && tx < HeightNextX + HeightNextW) heightTouchStartZone = 2;
-        else if (tx >= HeightRightX && tx < HeightRightX + HeightRightW) heightTouchStartZone = 3;
+      int padX = 10;
+      int padY = 10;
+      if (ty >= HeightBtnY - padY && ty < HeightBtnY + HeightBtnH + padY) {
+        if (tx >= HeightLeftX - padX && tx < HeightLeftX + HeightLeftW + padX) heightTouchStartZone = 1;
+        else if (tx >= HeightNextX - padX && tx < HeightNextX + HeightNextW + padX) heightTouchStartZone = 2;
+        else if (tx >= HeightRightX - padX && tx < HeightRightX + HeightRightW + padX) heightTouchStartZone = 3;
       }
       if (heightTouchStartZone == 1) {
         heightTouchLock = true;
@@ -1319,7 +1397,7 @@ void loop() {
       int rawDy = heightTouchLastY - heightTouchStartY;
       uint32_t dur = now - heightTouchStartMs;
 
-      bool isTap = dur <= 650 && dx <= 32 && dy <= 32;
+      bool isTap = dur <= 650 && dx <= 45 && dy <= 45;
       bool isSwipe = dur <= 700 && ((dx >= 60 && dy <= 35) || (dy >= 60 && dx <= 35));
 
       if (isSwipe) {
@@ -1334,7 +1412,7 @@ void loop() {
         if (currentHeightCm < 120) currentHeightCm = 120;
         heightChanged = true;
       } else if (isTap) {
-        bool tapInSlider = (heightTouchStartZone == 4) || (heightTouchLastX >= HeightSliderX && heightTouchLastX < HeightSliderX + HeightSliderW && heightTouchLastY >= HeightSliderY - 16 && heightTouchLastY < HeightSliderY + HeightSliderH + 16);
+        bool tapInSlider = (heightTouchStartZone == 4) || (heightTouchLastX >= HeightSliderX && heightTouchLastX < HeightSliderX + HeightSliderW && heightTouchLastY >= HeightSliderY - 24 && heightTouchLastY < HeightSliderY + HeightSliderH + 24);
         if (tapInSlider) {
           int pos = heightTouchLastX - HeightSliderX;
           if (pos < 0) pos = 0;
@@ -1369,7 +1447,7 @@ void loop() {
 
     bool shortPress = false;
     bool longPress = false;
-    bootButtonUpdate(shortPress, longPress);
+    touchBtn.update(shortPress, longPress);
     if (shortPress) {
       currentHeightCm++;
       if (currentHeightCm > 220) currentHeightCm = 120;
@@ -1415,6 +1493,20 @@ void loop() {
     int tapX = 0;
     int tapY = 0;
     uint32_t nowTap = millis();
+    bool shortPress = false;
+    bool longPress = false;
+    touchBtn.update(shortPress, longPress);
+    if (shortPress) {
+      tryTareNow();
+      stableHoldStartMs = 0;
+    }
+    if (longPress) {
+      stableHoldStartMs = 0;
+      heightTouchPrev = false;
+      setState(AppState::InputHeight);
+      delay(10);
+      return;
+    }
     static TouchHoldState weighHoldTare;
     static TouchHoldState weighHoldBack;
     bool holdTare = touchHoldInRect(touching, tx, ty, WeighTareX, WeighBtnY, WeighTareW, WeighBtnH, 18, nowTap, 120, weighHoldTare);
@@ -1652,6 +1744,14 @@ void loop() {
       int tapX = 0;
       int tapY = 0;
       uint32_t nowTap = millis();
+      bool shortPress = false;
+      bool longPress = false;
+      touchBtn.update(shortPress, longPress);
+      if (shortPress || longPress) {
+        setState(AppState::Weighing);
+        delay(10);
+        return;
+      }
       static TouchHoldState payHoldCancel;
       bool holdCancel = touchHoldInRect(touching, tx, ty, PayCancelX, PayCancelY, PayCancelW, PayCancelH, 18, nowTap, 120, payHoldCancel);
       if (holdCancel) {
@@ -1766,7 +1866,7 @@ void loop() {
       }
       bool sp = false;
       bool lp = false;
-      bootButtonUpdate(sp, lp);
+      touchBtn.update(sp, lp);
       if (sp || lp) break;
       delay(10);
     }

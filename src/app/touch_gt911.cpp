@@ -136,11 +136,13 @@ bool TouchGt911::read(TouchPoint &out) {
   };
 
   Candidate c0 = parseAt(0);
-  Candidate c1 = parseAt(1);
+  Candidate c1;
+  c1.ok = false;
   Candidate c2;
   c2.ok = false;
-  if (!c0.ok && !c1.ok) {
-    c2 = parseAt(2);
+  if (!c0.ok) {
+    c1 = parseAt(1);
+    if (!c1.ok) c2 = parseAt(2);
   }
 
   static bool wasTouching = false;
@@ -151,27 +153,30 @@ bool TouchGt911::read(TouchPoint &out) {
   wasTouching = true;
 
   Candidate best;
-  uint32_t bestScore = 0xFFFFFFFFu;
-  Candidate candidates[] = {c0, c1, c2};
-  for (int i = 0; i < (int)(sizeof(candidates) / sizeof(candidates[0])); ++i) {
-    if (!candidates[i].ok) continue;
-    if (!hasLast) {
-      best = candidates[i];
-      bestScore = 0;
-      break;
-    }
-    int dx = (int)candidates[i].x - (int)lastX;
-    int dy = (int)candidates[i].y - (int)lastY;
-    if (dx < 0) dx = -dx;
-    if (dy < 0) dy = -dy;
-    uint32_t score = (uint32_t)dx * (uint32_t)dx + (uint32_t)dy * (uint32_t)dy;
-    if (score < bestScore) {
-      bestScore = score;
-      best = candidates[i];
-    }
+  best.ok = false;
+  if (c0.ok) {
+    best = c0;
+  } else if (hasLast && c1.ok && c2.ok) {
+    int dx1 = (int)c1.x - (int)lastX;
+    int dy1 = (int)c1.y - (int)lastY;
+    if (dx1 < 0) dx1 = -dx1;
+    if (dy1 < 0) dy1 = -dy1;
+    uint32_t s1 = (uint32_t)dx1 * (uint32_t)dx1 + (uint32_t)dy1 * (uint32_t)dy1;
+    int dx2 = (int)c2.x - (int)lastX;
+    int dy2 = (int)c2.y - (int)lastY;
+    if (dx2 < 0) dx2 = -dx2;
+    if (dy2 < 0) dy2 = -dy2;
+    uint32_t s2 = (uint32_t)dx2 * (uint32_t)dx2 + (uint32_t)dy2 * (uint32_t)dy2;
+    best = (s1 <= s2) ? c1 : c2;
+  } else if (c1.ok) {
+    best = c1;
+  } else if (c2.ok) {
+    best = c2;
   }
   if (!best.ok) {
-    best = c0.ok ? c0 : c1;
+    uint8_t z = 0;
+    writeReg16(0x814E, &z, 1);
+    return true;
   }
   uint16_t x = best.x;
   uint16_t y = best.y;
