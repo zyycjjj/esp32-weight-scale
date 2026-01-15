@@ -106,6 +106,33 @@
 #define AIW_TOUCH_THRESHOLD 0
 #endif
 
+#ifndef AIW_TOUCH_MAP_MODE
+#define AIW_TOUCH_MAP_MODE 6
+#endif
+
+#ifndef AIW_TOUCH_AFFINE_ENABLED
+#define AIW_TOUCH_AFFINE_ENABLED 0
+#endif
+
+#ifndef AIW_TOUCH_AFFINE_A
+#define AIW_TOUCH_AFFINE_A 1.0f
+#endif
+#ifndef AIW_TOUCH_AFFINE_B
+#define AIW_TOUCH_AFFINE_B 0.0f
+#endif
+#ifndef AIW_TOUCH_AFFINE_C
+#define AIW_TOUCH_AFFINE_C 0.0f
+#endif
+#ifndef AIW_TOUCH_AFFINE_D
+#define AIW_TOUCH_AFFINE_D 0.0f
+#endif
+#ifndef AIW_TOUCH_AFFINE_E
+#define AIW_TOUCH_AFFINE_E 1.0f
+#endif
+#ifndef AIW_TOUCH_AFFINE_F
+#define AIW_TOUCH_AFFINE_F 0.0f
+#endif
+
 namespace aiw::config {
 static const char *WifiSsid = AIW_WIFI_SSID;
 static const char *WifiPassword = AIW_WIFI_PASSWORD;
@@ -133,4 +160,12 @@ static const int CodecI2cAddr = AIW_CODEC_I2C_ADDR;
 static const int AudioVolume = AIW_AUDIO_VOLUME;
 static const int TouchPin = AIW_TOUCH_PIN;
 static const uint16_t TouchThreshold = (uint16_t)AIW_TOUCH_THRESHOLD;
+static const uint8_t TouchMapMode = (uint8_t)AIW_TOUCH_MAP_MODE;
+static const bool TouchAffineEnabled = (AIW_TOUCH_AFFINE_ENABLED != 0);
+static constexpr float TouchAffineA = AIW_TOUCH_AFFINE_A;
+static constexpr float TouchAffineB = AIW_TOUCH_AFFINE_B;
+static constexpr float TouchAffineC = AIW_TOUCH_AFFINE_C;
+static constexpr float TouchAffineD = AIW_TOUCH_AFFINE_D;
+static constexpr float TouchAffineE = AIW_TOUCH_AFFINE_E;
+static constexpr float TouchAffineF = AIW_TOUCH_AFFINE_F;
 }

@@ -112,6 +112,8 @@ bool TouchGt911::read(TouchPoint &out) {
 
   uint16_t mx = maxX_ ? maxX_ : 0xFFFFu;
   uint16_t my = maxY_ ? maxY_ : 0xFFFFu;
+  uint16_t bound = mx > my ? mx : my;
+  if (bound == 0) bound = 0xFFFFu;
 
   struct Candidate {
     uint16_t x = 0;
@@ -119,31 +121,45 @@ bool TouchGt911::read(TouchPoint &out) {
     uint16_t size = 0;
     uint8_t id = 0;
     bool ok = false;
+    uint16_t score = 0;
   };
 
-  auto parseAt = [&](int off) -> Candidate {
-    Candidate c;
-    if (off < 0 || off + 6 >= (int)sizeof(buf)) return c;
-    c.id = buf[off + 0];
-    c.x = (uint16_t)buf[off + 1] | ((uint16_t)buf[off + 2] << 8);
-    c.y = (uint16_t)buf[off + 3] | ((uint16_t)buf[off + 4] << 8);
-    c.size = (uint16_t)buf[off + 5] | ((uint16_t)buf[off + 6] << 8);
+  auto scoreCandidate = [&](Candidate &c) {
+    uint16_t limX = maxX_ ? maxX_ : bound;
+    uint16_t limY = maxY_ ? maxY_ : bound;
+    bool xyOk = c.x < limX && c.y < limY;
+    bool sizeOk = c.size < 8192;
     bool idOk = c.id < 0x80;
-    bool xyOk = c.x < mx && c.y < my;
-    bool sizeOk = c.size > 0 && c.size < 4096;
-    c.ok = idOk && xyOk && sizeOk;
+    c.score = 0;
+    if (xyOk) c.score += 100;
+    if (sizeOk) c.score += 10;
+    if (idOk) c.score += 4;
+    if (c.id < 10) c.score += 4;
+    c.ok = xyOk && sizeOk && idOk;
+  };
+
+  auto parseLayoutIdFirst = [&]() -> Candidate {
+    Candidate c;
+    c.id = buf[0];
+    c.x = (uint16_t)buf[1] | ((uint16_t)buf[2] << 8);
+    c.y = (uint16_t)buf[3] | ((uint16_t)buf[4] << 8);
+    c.size = (uint16_t)buf[5] | ((uint16_t)buf[6] << 8);
+    scoreCandidate(c);
     return c;
   };
 
-  Candidate c0 = parseAt(0);
-  Candidate c1;
-  c1.ok = false;
-  Candidate c2;
-  c2.ok = false;
-  if (!c0.ok) {
-    c1 = parseAt(1);
-    if (!c1.ok) c2 = parseAt(2);
-  }
+  auto parseLayoutIdLast = [&]() -> Candidate {
+    Candidate c;
+    c.x = (uint16_t)buf[0] | ((uint16_t)buf[1] << 8);
+    c.y = (uint16_t)buf[2] | ((uint16_t)buf[3] << 8);
+    c.size = (uint16_t)buf[4] | ((uint16_t)buf[5] << 8);
+    c.id = buf[6];
+    scoreCandidate(c);
+    return c;
+  };
+
+  Candidate c0 = parseLayoutIdFirst();
+  Candidate c1 = parseLayoutIdLast();
 
   static bool wasTouching = false;
   static bool hasLast = false;
@@ -152,26 +168,66 @@ bool TouchGt911::read(TouchPoint &out) {
   if (!wasTouching) hasLast = false;
   wasTouching = true;
 
+  static bool layoutLocked = false;
+  static bool layoutUseIdLast = true;
+  static uint8_t layoutMismatch = 0;
+
+  auto chooseByDistance = [&](const Candidate &a, const Candidate &b) -> Candidate {
+    int dxA = (int)a.x - (int)lastX;
+    int dyA = (int)a.y - (int)lastY;
+    if (dxA < 0) dxA = -dxA;
+    if (dyA < 0) dyA = -dyA;
+    uint32_t da = (uint32_t)dxA * (uint32_t)dxA + (uint32_t)dyA * (uint32_t)dyA;
+    int dxB = (int)b.x - (int)lastX;
+    int dyB = (int)b.y - (int)lastY;
+    if (dxB < 0) dxB = -dxB;
+    if (dyB < 0) dyB = -dyB;
+    uint32_t db = (uint32_t)dxB * (uint32_t)dxB + (uint32_t)dyB * (uint32_t)dyB;
+    return (da <= db) ? a : b;
+  };
+
   Candidate best;
   best.ok = false;
-  if (c0.ok) {
-    best = c0;
-  } else if (hasLast && c1.ok && c2.ok) {
-    int dx1 = (int)c1.x - (int)lastX;
-    int dy1 = (int)c1.y - (int)lastY;
-    if (dx1 < 0) dx1 = -dx1;
-    if (dy1 < 0) dy1 = -dy1;
-    uint32_t s1 = (uint32_t)dx1 * (uint32_t)dx1 + (uint32_t)dy1 * (uint32_t)dy1;
-    int dx2 = (int)c2.x - (int)lastX;
-    int dy2 = (int)c2.y - (int)lastY;
-    if (dx2 < 0) dx2 = -dx2;
-    if (dy2 < 0) dy2 = -dy2;
-    uint32_t s2 = (uint32_t)dx2 * (uint32_t)dx2 + (uint32_t)dy2 * (uint32_t)dy2;
-    best = (s1 <= s2) ? c1 : c2;
-  } else if (c1.ok) {
-    best = c1;
-  } else if (c2.ok) {
-    best = c2;
+  if (!layoutLocked) {
+    if (c0.score == 0 && c1.score == 0) {
+      best.ok = false;
+    } else if (c0.score > c1.score) {
+      best = c0;
+      layoutUseIdLast = false;
+      layoutLocked = true;
+    } else if (c1.score > c0.score) {
+      best = c1;
+      layoutUseIdLast = true;
+      layoutLocked = true;
+    } else {
+      if (c1.ok) {
+        best = c1;
+        layoutUseIdLast = true;
+      } else {
+        best = c0;
+        layoutUseIdLast = false;
+      }
+      layoutLocked = best.ok;
+    }
+  }
+
+  if (layoutLocked) {
+    Candidate primary = layoutUseIdLast ? c1 : c0;
+    Candidate secondary = layoutUseIdLast ? c0 : c1;
+    if (primary.ok) {
+      best = primary;
+      layoutMismatch = 0;
+    } else if (secondary.ok) {
+      best = secondary;
+      if (layoutMismatch < 255) layoutMismatch++;
+      if (layoutMismatch >= 3) {
+        layoutUseIdLast = !layoutUseIdLast;
+        layoutMismatch = 0;
+      }
+    }
+    if (hasLast && c0.ok && c1.ok) {
+      best = chooseByDistance(c0, c1);
+    }
   }
   if (!best.ok) {
     uint8_t z = 0;

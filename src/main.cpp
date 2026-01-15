@@ -185,9 +185,37 @@ static uint32_t lastHx711LogMs = 0;
 static uint32_t lastTareMs = 0;
 static uint32_t stableHoldStartMs = 0;
 static uint32_t lastTouchLogMs = 0;
-static uint8_t touchMapMode = 0;
+static uint8_t touchMapMode = 0x06;
 static uint32_t lastHeightBtnMs = 0;
 static bool touchRawLogEnabled = false;
+static aiw::TouchPoint touchPolled;
+static bool touchPolledOk = false;
+static bool touchCalEnabled = true;
+static bool touchCalReady = false;
+static int touchCalMinX = 0;
+static int touchCalMaxX = 0;
+static int touchCalMinY = 0;
+static int touchCalMaxY = 0;
+static int touchCalMinXc = 0;
+static int touchCalMaxXc = 0;
+static int touchCalMinYc = 0;
+static int touchCalMaxYc = 0;
+static uint8_t touchCalMinXn = 0;
+static uint8_t touchCalMaxXn = 0;
+static uint8_t touchCalMinYn = 0;
+static uint8_t touchCalMaxYn = 0;
+static bool touchUiEnabled = true;
+static bool touchAffineEnabled = true;
+static bool touchAffineReady = false;
+static uint8_t touchAffineStep = 0;
+static float touchAffineA = 1.0f;
+static float touchAffineB = 0.0f;
+static float touchAffineC = 0.0f;
+static float touchAffineD = 0.0f;
+static float touchAffineE = 1.0f;
+static float touchAffineF = 0.0f;
+static int touchAffineRawX[4];
+static int touchAffineRawY[4];
 
 static const char *stateName(AppState s) {
   switch (s) {
@@ -336,39 +364,214 @@ static void drawPayFooter() {
   display.endWrite();
 }
 
-static void readTouchMapped(bool &touching, int &x, int &y) {
-  touching = false;
-  x = 0;
-  y = 0;
-  static bool prevTouching = false;
-  static bool hasStable = false;
-  static int stableX = 0;
-  static int stableY = 0;
-  static uint32_t stableMs = 0;
-  static uint8_t stableCount = 0;
-  static uint8_t histN = 0;
-  static int histX[5];
-  static int histY[5];
-  static uint8_t jumpPending = 0;
-  static int jumpX = 0;
-  static int jumpY = 0;
+static void drawTouchCalTarget(int x, int y) {
+  int cx = x;
+  int cy = y;
+  if (cx < 2) cx = 2;
+  if (cy < 2) cy = 2;
+  if (cx > aiw::DisplaySt7789::Width - 3) cx = aiw::DisplaySt7789::Width - 3;
+  if (cy > aiw::DisplaySt7789::Height - 3) cy = aiw::DisplaySt7789::Height - 3;
+  display.beginWrite();
+  display.fillRect(cx - 6, cy - 1, 13, 3, ColorBlack);
+  display.fillRect(cx - 1, cy - 6, 3, 13, ColorBlack);
+  display.endWrite();
+}
 
-  aiw::TouchPoint p;
-  if (!touchScreen.read(p)) return;
-  if (!p.touching) {
-    prevTouching = false;
-    hasStable = false;
-    stableCount = 0;
-    histN = 0;
-    jumpPending = 0;
-    return;
+static void touchApplyConfigDefaults() {
+  touchMapMode = aiw::config::TouchMapMode;
+  touchAffineEnabled = aiw::config::TouchAffineEnabled;
+  touchAffineA = aiw::config::TouchAffineA;
+  touchAffineB = aiw::config::TouchAffineB;
+  touchAffineC = aiw::config::TouchAffineC;
+  touchAffineD = aiw::config::TouchAffineD;
+  touchAffineE = aiw::config::TouchAffineE;
+  touchAffineF = aiw::config::TouchAffineF;
+  touchAffineReady = touchAffineEnabled;
+}
+
+static void transformTouchRawByMode(int rawX, int rawY, uint16_t mxIn, uint16_t myIn, uint8_t mode, int &txOut, int &tyOut, uint16_t &mxOut, uint16_t &myOut) {
+  uint16_t mx = mxIn;
+  uint16_t my = myIn;
+  int tx = rawX;
+  int ty = rawY;
+  if (tx < 0) tx = 0;
+  if (ty < 0) ty = 0;
+  if (tx >= (int)mx) tx = (int)mx - 1;
+  if (ty >= (int)my) ty = (int)my - 1;
+  if (mode & 0x01u) {
+    int t = tx;
+    tx = ty;
+    ty = t;
+    uint16_t tm = mx;
+    mx = my;
+    my = tm;
   }
-  int tx = p.x;
-  int ty = p.y;
+  if (mode & 0x02u) tx = (int)mx - 1 - tx;
+  if (mode & 0x04u) ty = (int)my - 1 - ty;
+  txOut = tx;
+  tyOut = ty;
+  mxOut = mx;
+  myOut = my;
+}
+
+static bool solve3x3(const float m[9], const float v[3], float out[3]) {
+  float a = m[0], b = m[1], c = m[2];
+  float d = m[3], e = m[4], f = m[5];
+  float g = m[6], h = m[7], i = m[8];
+  float det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+  if (fabsf(det) < 1e-6f) return false;
+  float invDet = 1.0f / det;
+  float inv[9];
+  inv[0] = (e * i - f * h) * invDet;
+  inv[1] = (c * h - b * i) * invDet;
+  inv[2] = (b * f - c * e) * invDet;
+  inv[3] = (f * g - d * i) * invDet;
+  inv[4] = (a * i - c * g) * invDet;
+  inv[5] = (c * d - a * f) * invDet;
+  inv[6] = (d * h - e * g) * invDet;
+  inv[7] = (b * g - a * h) * invDet;
+  inv[8] = (a * e - b * d) * invDet;
+  out[0] = inv[0] * v[0] + inv[1] * v[1] + inv[2] * v[2];
+  out[1] = inv[3] * v[0] + inv[4] * v[1] + inv[5] * v[2];
+  out[2] = inv[6] * v[0] + inv[7] * v[1] + inv[8] * v[2];
+  return true;
+}
+
+static bool computeTouchAffineLeastSquaresOut(const int rx[4], const int ry[4], const int sx[4], const int sy[4], float out[6], float &errOut) {
+  int minRx = rx[0], maxRx = rx[0], minRy = ry[0], maxRy = ry[0];
+  for (int i = 1; i < 4; ++i) {
+    if (rx[i] < minRx) minRx = rx[i];
+    if (rx[i] > maxRx) maxRx = rx[i];
+    if (ry[i] < minRy) minRy = ry[i];
+    if (ry[i] > maxRy) maxRy = ry[i];
+  }
+  int spanX = maxRx - minRx;
+  int spanY = maxRy - minRy;
+  if (!((spanX >= 40 && spanY >= 4) || (spanX >= 4 && spanY >= 40))) return false;
+
+  float sxx = 0, sxy = 0, sx1 = 0;
+  float syy = 0, sy1 = 0;
+  float b0x = 0, b1x = 0, b2x = 0;
+  float b0y = 0, b1y = 0, b2y = 0;
+  for (int i = 0; i < 4; ++i) {
+    float x = (float)rx[i];
+    float y = (float)ry[i];
+    float z = 1.0f;
+    float ox = (float)sx[i];
+    float oy = (float)sy[i];
+    sxx += x * x;
+    sxy += x * y;
+    sx1 += x * z;
+    syy += y * y;
+    sy1 += y * z;
+    b0x += x * ox;
+    b1x += y * ox;
+    b2x += z * ox;
+    b0y += x * oy;
+    b1y += y * oy;
+    b2y += z * oy;
+  }
+  float m[9] = {
+      sxx, sxy, sx1,
+      sxy, syy, sy1,
+      sx1, sy1, 4.0f,
+  };
+  float trace = m[0] + m[4] + m[8];
+  float lambda = trace * 1e-3f;
+  m[0] += lambda;
+  m[4] += lambda;
+  m[8] += lambda;
+  float vx[3] = {b0x, b1x, b2x};
+  float vy[3] = {b0y, b1y, b2y};
+  float abc[3];
+  float def[3];
+  if (!solve3x3(m, vx, abc)) return false;
+  if (!solve3x3(m, vy, def)) return false;
+  out[0] = abc[0];
+  out[1] = abc[1];
+  out[2] = abc[2];
+  out[3] = def[0];
+  out[4] = def[1];
+  out[5] = def[2];
+  float se = 0.0f;
+  for (int i = 0; i < 4; ++i) {
+    float px = out[0] * (float)rx[i] + out[1] * (float)ry[i] + out[2];
+    float py = out[3] * (float)rx[i] + out[4] * (float)ry[i] + out[5];
+    float dx = px - (float)sx[i];
+    float dy = py - (float)sy[i];
+    se += dx * dx + dy * dy;
+  }
+  errOut = sqrtf(se / 4.0f);
+  return true;
+}
+
+static bool chooseBestTouchAffineMode(const int rawX[4], const int rawY[4], const int sx[4], const int sy[4], uint8_t &bestModeOut, float bestCoeffOut[6], float &bestErrOut) {
+  uint16_t mx0 = touchScreen.maxX();
+  uint16_t my0 = touchScreen.maxY();
+  if (mx0 == 0) mx0 = (uint16_t)aiw::DisplaySt7789::Width;
+  if (my0 == 0) my0 = (uint16_t)aiw::DisplaySt7789::Height;
+  bool hasBest = false;
+  uint8_t bestMode = 0;
+  float bestErr = 0.0f;
+  float bestCoeff[6] = {0};
+  for (uint8_t mode = 0; mode < 8; ++mode) {
+    int rx[4];
+    int ry[4];
+    for (int i = 0; i < 4; ++i) {
+      uint16_t mx = mx0;
+      uint16_t my = my0;
+      int tx = 0;
+      int ty = 0;
+      transformTouchRawByMode(rawX[i], rawY[i], mx0, my0, mode, tx, ty, mx, my);
+      rx[i] = tx;
+      ry[i] = ty;
+    }
+    float coeff[6];
+    float err = 0.0f;
+    if (!computeTouchAffineLeastSquaresOut(rx, ry, sx, sy, coeff, err)) continue;
+    if (!hasBest || err < bestErr) {
+      hasBest = true;
+      bestErr = err;
+      bestMode = mode;
+      for (int k = 0; k < 6; ++k) bestCoeff[k] = coeff[k];
+    }
+  }
+  if (!hasBest) return false;
+  bestModeOut = bestMode;
+  bestErrOut = bestErr;
+  for (int k = 0; k < 6; ++k) bestCoeffOut[k] = bestCoeff[k];
+  return true;
+}
+
+static bool mapTouchRawToScreen(int rawX, int rawY, int &outX, int &outY, bool updateCal) {
+  outX = 0;
+  outY = 0;
+  if (touchAffineEnabled && touchAffineReady) {
+    uint16_t mx = touchScreen.maxX();
+    uint16_t my = touchScreen.maxY();
+    if (mx == 0) mx = (uint16_t)aiw::DisplaySt7789::Width;
+    if (my == 0) my = (uint16_t)aiw::DisplaySt7789::Height;
+    int tx = 0;
+    int ty = 0;
+    transformTouchRawByMode(rawX, rawY, mx, my, touchMapMode, tx, ty, mx, my);
+    float fx = touchAffineA * (float)tx + touchAffineB * (float)ty + touchAffineC;
+    float fy = touchAffineD * (float)tx + touchAffineE * (float)ty + touchAffineF;
+    int sx = (int)lroundf(fx);
+    int sy = (int)lroundf(fy);
+    if (sx < 0) sx = 0;
+    if (sy < 0) sy = 0;
+    if (sx >= aiw::DisplaySt7789::Width) sx = aiw::DisplaySt7789::Width - 1;
+    if (sy >= aiw::DisplaySt7789::Height) sy = aiw::DisplaySt7789::Height - 1;
+    outX = sx;
+    outY = sy;
+    return true;
+  }
   uint16_t mx = touchScreen.maxX();
   uint16_t my = touchScreen.maxY();
   if (mx == 0) mx = (uint16_t)aiw::DisplaySt7789::Width;
   if (my == 0) my = (uint16_t)aiw::DisplaySt7789::Height;
+  int tx = rawX;
+  int ty = rawY;
   if (tx < 0) tx = 0;
   if (ty < 0) ty = 0;
   if (tx >= (int)mx) tx = (int)mx - 1;
@@ -383,10 +586,126 @@ static void readTouchMapped(bool &touching, int &x, int &y) {
   }
   if (touchMapMode & 0x02u) tx = (int)mx - 1 - tx;
   if (touchMapMode & 0x04u) ty = (int)my - 1 - ty;
-  tx = (int)((uint32_t)tx * (uint32_t)aiw::DisplaySt7789::Width / (uint32_t)mx);
-  ty = (int)((uint32_t)ty * (uint32_t)aiw::DisplaySt7789::Height / (uint32_t)my);
-  if (tx >= aiw::DisplaySt7789::Width) tx = aiw::DisplaySt7789::Width - 1;
-  if (ty >= aiw::DisplaySt7789::Height) ty = aiw::DisplaySt7789::Height - 1;
+
+  if (touchCalEnabled && updateCal) {
+    if (!touchCalReady) {
+      touchCalMinX = tx;
+      touchCalMaxX = tx;
+      touchCalMinY = ty;
+      touchCalMaxY = ty;
+      touchCalMinXc = tx;
+      touchCalMaxXc = tx;
+      touchCalMinYc = ty;
+      touchCalMaxYc = ty;
+      touchCalMinXn = 1;
+      touchCalMaxXn = 1;
+      touchCalMinYn = 1;
+      touchCalMaxYn = 1;
+      touchCalReady = true;
+    } else {
+      if (tx < touchCalMinXc - 2) {
+        touchCalMinXc = tx;
+        touchCalMinXn = 1;
+      } else {
+        int dx = tx - touchCalMinXc;
+        if (dx < 0) dx = -dx;
+        if (dx <= 2 && touchCalMinXn < 250) touchCalMinXn++;
+      }
+      if (tx > touchCalMaxXc + 2) {
+        touchCalMaxXc = tx;
+        touchCalMaxXn = 1;
+      } else {
+        int dx = tx - touchCalMaxXc;
+        if (dx < 0) dx = -dx;
+        if (dx <= 2 && touchCalMaxXn < 250) touchCalMaxXn++;
+      }
+
+      if (ty < touchCalMinYc - 2) {
+        touchCalMinYc = ty;
+        touchCalMinYn = 1;
+      } else {
+        int dy = ty - touchCalMinYc;
+        if (dy < 0) dy = -dy;
+        if (dy <= 2 && touchCalMinYn < 250) touchCalMinYn++;
+      }
+      if (ty > touchCalMaxYc + 2) {
+        touchCalMaxYc = ty;
+        touchCalMaxYn = 1;
+      } else {
+        int dy = ty - touchCalMaxYc;
+        if (dy < 0) dy = -dy;
+        if (dy <= 2 && touchCalMaxYn < 250) touchCalMaxYn++;
+      }
+
+      if (touchCalMinXn >= 4) touchCalMinX = touchCalMinXc;
+      if (touchCalMaxXn >= 4) touchCalMaxX = touchCalMaxXc;
+      if (touchCalMinYn >= 4) touchCalMinY = touchCalMinYc;
+      if (touchCalMaxYn >= 4) touchCalMaxY = touchCalMaxYc;
+    }
+  }
+
+  int inMinX = 0;
+  int inMaxX = (int)mx - 1;
+  int inMinY = 0;
+  int inMaxY = (int)my - 1;
+  int calRangeX = touchCalMaxX - touchCalMinX;
+  int calRangeY = touchCalMaxY - touchCalMinY;
+  if (touchCalEnabled && touchCalReady && calRangeX >= 80 && calRangeX < (int)mx) {
+    inMinX = touchCalMinX;
+    inMaxX = touchCalMaxX;
+  }
+  if (touchCalEnabled && touchCalReady && calRangeY >= 80 && calRangeY < (int)my) {
+    inMinY = touchCalMinY;
+    inMaxY = touchCalMaxY;
+  }
+
+  if (tx < inMinX) tx = inMinX;
+  if (tx > inMaxX) tx = inMaxX;
+  if (ty < inMinY) ty = inMinY;
+  if (ty > inMaxY) ty = inMaxY;
+
+  int denomX = (inMaxX - inMinX) + 1;
+  int denomY = (inMaxY - inMinY) + 1;
+  if (denomX < 1) denomX = 1;
+  if (denomY < 1) denomY = 1;
+
+  int sx = (int)(((uint32_t)(tx - inMinX)) * (uint32_t)aiw::DisplaySt7789::Width / (uint32_t)denomX);
+  int sy = (int)(((uint32_t)(ty - inMinY)) * (uint32_t)aiw::DisplaySt7789::Height / (uint32_t)denomY);
+  if (sx < 0) sx = 0;
+  if (sy < 0) sy = 0;
+  if (sx >= aiw::DisplaySt7789::Width) sx = aiw::DisplaySt7789::Width - 1;
+  if (sy >= aiw::DisplaySt7789::Height) sy = aiw::DisplaySt7789::Height - 1;
+  outX = sx;
+  outY = sy;
+  return true;
+}
+
+static void readTouchMapped(bool &touching, int &x, int &y) {
+  touching = false;
+  x = 0;
+  y = 0;
+  if (!touchUiEnabled) return;
+  static bool prevTouching = false;
+  static bool hasStable = false;
+  static int stableX = 0;
+  static int stableY = 0;
+  static uint32_t stableMs = 0;
+  static uint8_t stableCount = 0;
+  static uint8_t histN = 0;
+  static int histX[5];
+  static int histY[5];
+
+  if (!touchPolledOk) return;
+  if (!touchPolled.touching) {
+    prevTouching = false;
+    hasStable = false;
+    stableCount = 0;
+    histN = 0;
+    return;
+  }
+  int tx = 0;
+  int ty = 0;
+  if (!mapTouchRawToScreen(touchPolled.x, touchPolled.y, tx, ty, true)) return;
 
   uint32_t nowMs = millis();
   if (histN < 5) {
@@ -417,8 +736,10 @@ static void readTouchMapped(bool &touching, int &x, int &y) {
   };
   int fx = median5(histX, histN);
   int fy = median5(histY, histN);
-  tx = fx;
-  ty = fy;
+  if (histN >= 3) {
+    tx = fx;
+    ty = fy;
+  }
 
   if (!prevTouching) {
     prevTouching = true;
@@ -427,14 +748,12 @@ static void readTouchMapped(bool &touching, int &x, int &y) {
     stableY = ty;
     stableMs = nowMs;
     stableCount = 1;
-    jumpPending = 0;
   } else if (!hasStable) {
     hasStable = true;
     stableX = tx;
     stableY = ty;
     stableMs = nowMs;
     stableCount = 1;
-    jumpPending = 0;
   } else {
     int dx = tx - stableX;
     int dy = ty - stableY;
@@ -445,39 +764,15 @@ static void readTouchMapped(bool &touching, int &x, int &y) {
       stableY = (stableY + ty) / 2;
       stableMs = nowMs;
       stableCount = 2;
-      jumpPending = 0;
     } else {
-      int jumpTh = 28;
-      if (dx > jumpTh || dy > jumpTh) {
-        if (!jumpPending) {
-          jumpPending = 1;
-          jumpX = tx;
-          jumpY = ty;
-          touching = true;
-          x = stableX;
-          y = stableY;
-          return;
-        }
-        int jdx = tx - jumpX;
-        int jdy = ty - jumpY;
-        if (jdx < 0) jdx = -jdx;
-        if (jdy < 0) jdy = -jdy;
-        if (jdx <= 18 && jdy <= 18) {
-          stableX = (stableX + tx) / 2;
-          stableY = (stableY + ty) / 2;
-          stableMs = nowMs;
-        }
-        jumpX = tx;
-        jumpY = ty;
-        jumpPending = 1;
-        touching = true;
-        x = stableX;
-        y = stableY;
-        return;
+      int snapTh = 60;
+      if (dx > snapTh || dy > snapTh) {
+        stableX = tx;
+        stableY = ty;
+      } else {
+        stableX = (stableX * 3 + tx) / 4;
+        stableY = (stableY * 3 + ty) / 4;
       }
-      jumpPending = 0;
-      stableX = (stableX * 7 + tx) / 8;
-      stableY = (stableY * 7 + ty) / 8;
       stableMs = nowMs;
     }
   }
@@ -888,6 +1183,7 @@ static bool postJson(const String &url, const String &body, int &outCode, String
 void setup() {
   Serial.begin(115200);
   delay(200);
+  touchApplyConfigDefaults();
   aiw::i2cBusInit(aiw::config::I2cSdaPin, aiw::config::I2cSclPin, 100000);
 
   display.begin();
@@ -917,6 +1213,8 @@ void setup() {
     touchOk = touchScreen.detect();
   }
   Serial.printf("touch gt911 detect=%d sda=%d scl=%d maxX=%u maxY=%u\n", touchOk ? 1 : 0, aiw::config::I2cSdaPin, aiw::config::I2cSclPin, (unsigned)touchScreen.maxX(), (unsigned)touchScreen.maxY());
+  Serial.printf("touch map mode=%u (swap=%u mx=%u my=%u)\n", (unsigned)touchMapMode, (unsigned)((touchMapMode & 0x01u) ? 1 : 0), (unsigned)((touchMapMode & 0x02u) ? 1 : 0), (unsigned)((touchMapMode & 0x04u) ? 1 : 0));
+  Serial.printf("touch affine ready=%d\n", touchAffineReady ? 1 : 0);
   if (!touchOk) {
     Serial.println("touch i2c scan:");
     i2cScanBus(aiw::config::I2cSdaPin, aiw::config::I2cSclPin);
@@ -957,15 +1255,15 @@ void setup() {
 }
 
 void loop() {
-  if (touchRawLogEnabled) {
-    aiw::TouchPoint p;
-    bool ok = touchScreen.read(p);
-    if (ok && p.touching) {
-      uint32_t now = millis();
-      if (now - lastTouchLogMs > 200) {
-        lastTouchLogMs = now;
-        Serial.printf("touch raw x=%d y=%d\n", p.x, p.y);
-      }
+  touchPolledOk = touchScreen.read(touchPolled);
+  if (touchRawLogEnabled && touchPolledOk && touchPolled.touching) {
+    int mx = 0;
+    int my = 0;
+    mapTouchRawToScreen(touchPolled.x, touchPolled.y, mx, my, true);
+    uint32_t now = millis();
+    if (now - lastTouchLogMs > 200) {
+      lastTouchLogMs = now;
+      Serial.printf("touch raw x=%d y=%d map x=%d y=%d\n", touchPolled.x, touchPolled.y, mx, my);
     }
   }
 
@@ -978,8 +1276,40 @@ void loop() {
     if (c == 'm') {
       touchMapMode = (uint8_t)((touchMapMode + 1) & 0x07u);
       Serial.printf("touch map mode=%u (swap=%u mx=%u my=%u)\n", (unsigned)touchMapMode, (unsigned)((touchMapMode & 0x01u) ? 1 : 0), (unsigned)((touchMapMode & 0x02u) ? 1 : 0), (unsigned)((touchMapMode & 0x04u) ? 1 : 0));
+      touchCalReady = false;
       uiDirty = true;
       if (state == AppState::InputHeight) drawHeightPicker();
+    }
+    if (c == 'k' || c == 'K') {
+      touchCalReady = false;
+      Serial.println("touch cal reset");
+    }
+    if (c == 'j' || c == 'J') {
+      touchCalEnabled = !touchCalEnabled;
+      touchCalReady = false;
+      Serial.printf("touch cal enabled=%d\n", touchCalEnabled ? 1 : 0);
+    }
+    if (c == 'i' || c == 'I') {
+      if (!touchCalReady) {
+        Serial.println("touch cal: not ready");
+      } else {
+        Serial.printf("touch cal x=[%d..%d] y=[%d..%d]\n", touchCalMinX, touchCalMaxX, touchCalMinY, touchCalMaxY);
+      }
+    }
+    if (c == 'a' || c == 'A') {
+      touchAffineReady = false;
+      touchAffineStep = 1;
+      Serial.println("touch affine start: hold TOP-LEFT corner");
+      drawTouchCalTarget(10, 10);
+    }
+    if (c == 'r' || c == 'R') {
+      touchAffineReady = false;
+      touchAffineStep = 0;
+      Serial.println("touch affine reset");
+    }
+    if (c == 'h' || c == 'H') {
+      Serial.printf("touch affine enabled=%d ready=%d step=%u\n", touchAffineEnabled ? 1 : 0, touchAffineReady ? 1 : 0, (unsigned)touchAffineStep);
+      Serial.printf("touch affine a=%.6f b=%.6f c=%.3f d=%.6f e=%.6f f=%.3f\n", touchAffineA, touchAffineB, touchAffineC, touchAffineD, touchAffineE, touchAffineF);
     }
     if (c == 'Z') {
       aiw::setZhRenderMode(aiw::zhRenderMode() + 1);
@@ -1258,6 +1588,98 @@ void loop() {
     }
   }
 
+  if (touchAffineStep >= 1 && touchAffineStep <= 4) {
+    touchUiEnabled = false;
+    static bool inPress = false;
+    static uint32_t pressStartMs = 0;
+    static uint32_t lastTouchMs = 0;
+    static int64_t sumX = 0;
+    static int64_t sumY = 0;
+    static uint16_t n = 0;
+    bool touchingNow = touchPolledOk && touchPolled.touching;
+    uint32_t now = millis();
+    if (touchingNow) {
+      if (!inPress) {
+        inPress = true;
+        pressStartMs = now;
+        sumX = 0;
+        sumY = 0;
+        n = 0;
+      }
+      lastTouchMs = now;
+      sumX += (int64_t)touchPolled.x;
+      sumY += (int64_t)touchPolled.y;
+      if (n < 2000) n++;
+    } else if (inPress) {
+      if ((now - lastTouchMs) < 120) {
+        return;
+      }
+      uint32_t dur = now - pressStartMs;
+      if (n >= 3 && dur >= 50) {
+        int ax = (int)(sumX / (int64_t)n);
+        int ay = (int)(sumY / (int64_t)n);
+        uint8_t idx = (uint8_t)(touchAffineStep - 1);
+        touchAffineRawX[idx] = ax;
+        touchAffineRawY[idx] = ay;
+        Serial.printf("touch affine p%u raw x=%d y=%d n=%u dur=%lu\n", (unsigned)touchAffineStep, ax, ay, (unsigned)n, (unsigned long)dur);
+        touchAffineStep++;
+        if (touchAffineStep == 2) {
+          Serial.println("touch affine next: hold TOP-RIGHT corner");
+          drawTouchCalTarget(aiw::DisplaySt7789::Width - 11, 10);
+        } else if (touchAffineStep == 3) {
+          Serial.println("touch affine next: hold BOTTOM-RIGHT corner");
+          drawTouchCalTarget(aiw::DisplaySt7789::Width - 11, aiw::DisplaySt7789::Height - 11);
+        } else if (touchAffineStep == 4) {
+          Serial.println("touch affine next: hold BOTTOM-LEFT corner");
+          drawTouchCalTarget(10, aiw::DisplaySt7789::Height - 11);
+        } else if (touchAffineStep == 5) {
+          const int sx[4] = {10, aiw::DisplaySt7789::Width - 11, aiw::DisplaySt7789::Width - 11, 10};
+          const int sy[4] = {10, 10, aiw::DisplaySt7789::Height - 11, aiw::DisplaySt7789::Height - 11};
+          uint8_t bestMode = 0;
+          float bestCoeff[6];
+          float bestErr = 0.0f;
+          bool ok = chooseBestTouchAffineMode(touchAffineRawX, touchAffineRawY, sx, sy, bestMode, bestCoeff, bestErr);
+          Serial.printf("touch affine computed ok=%d\n", ok ? 1 : 0);
+          if (ok) {
+            touchMapMode = bestMode;
+            touchAffineA = bestCoeff[0];
+            touchAffineB = bestCoeff[1];
+            touchAffineC = bestCoeff[2];
+            touchAffineD = bestCoeff[3];
+            touchAffineE = bestCoeff[4];
+            touchAffineF = bestCoeff[5];
+            touchAffineReady = true;
+            touchAffineEnabled = true;
+            Serial.printf("touch affine mode=%u err=%.2f\n", (unsigned)bestMode, bestErr);
+            Serial.printf("touch affine a=%.6f b=%.6f c=%.3f d=%.6f e=%.6f f=%.3f\n", touchAffineA, touchAffineB, touchAffineC, touchAffineD, touchAffineE, touchAffineF);
+            Serial.println("touch affine config:");
+            Serial.printf("#define AIW_TOUCH_MAP_MODE %u\n", (unsigned)touchMapMode);
+            Serial.printf("#define AIW_TOUCH_AFFINE_ENABLED 1\n");
+            Serial.printf("#define AIW_TOUCH_AFFINE_A %.9ff\n", touchAffineA);
+            Serial.printf("#define AIW_TOUCH_AFFINE_B %.9ff\n", touchAffineB);
+            Serial.printf("#define AIW_TOUCH_AFFINE_C %.9ff\n", touchAffineC);
+            Serial.printf("#define AIW_TOUCH_AFFINE_D %.9ff\n", touchAffineD);
+            Serial.printf("#define AIW_TOUCH_AFFINE_E %.9ff\n", touchAffineE);
+            Serial.printf("#define AIW_TOUCH_AFFINE_F %.9ff\n", touchAffineF);
+            touchAffineStep = 0;
+            touchUiEnabled = true;
+            touchCalReady = false;
+            uiDirty = true;
+          } else {
+            touchAffineStep = 1;
+            Serial.println("touch affine failed: hold TOP-LEFT corner");
+            drawTouchCalTarget(10, 10);
+          }
+        }
+      } else {
+        Serial.printf("touch affine too short (n=%u dur=%lu), try again\n", (unsigned)n, (unsigned long)dur);
+      }
+      inPress = false;
+    }
+  } else {
+    touchUiEnabled = true;
+  }
+
   if (printerSerial.available() > 0) {
     Serial.print("printer rx: ");
     int n = 0;
@@ -1293,17 +1715,6 @@ void loop() {
     }
     if (touching) {
       if (heightTouchFrames >= 2) {
-        int px = tx - 1;
-        int py = ty - 1;
-        if (px < 0) px = 0;
-        if (py < 0) py = 0;
-        int pw = 3;
-        int ph = 3;
-        if (px + pw > aiw::DisplaySt7789::Width) pw = aiw::DisplaySt7789::Width - px;
-        if (py + ph > aiw::DisplaySt7789::Height) ph = aiw::DisplaySt7789::Height - py;
-        display.beginWrite();
-        display.fillRect(px, py, pw, ph, ColorBlack);
-        display.endWrite();
       }
     }
 
@@ -1333,12 +1744,17 @@ void loop() {
       } else if (tx >= 70 && tx < 250 && ty >= 46 && ty < HeightSliderY - 6) {
         heightTouchStartZone = 5;
       }
-      int padX = 10;
       int padY = 10;
       if (ty >= HeightBtnY - padY && ty < HeightBtnY + HeightBtnH + padY) {
-        if (tx >= HeightLeftX - padX && tx < HeightLeftX + HeightLeftW + padX) heightTouchStartZone = 1;
-        else if (tx >= HeightNextX - padX && tx < HeightNextX + HeightNextW + padX) heightTouchStartZone = 2;
-        else if (tx >= HeightRightX - padX && tx < HeightRightX + HeightRightW + padX) heightTouchStartZone = 3;
+        int leftPadX = 18;
+        int nextPadX = 6;
+        int rightPadX = 18;
+        bool inLeft = (tx >= HeightLeftX - leftPadX) && (tx < HeightLeftX + HeightLeftW + leftPadX);
+        bool inNext = (tx >= HeightNextX - nextPadX) && (tx < HeightNextX + HeightNextW + nextPadX);
+        bool inRight = (tx >= HeightRightX - rightPadX) && (tx < HeightRightX + HeightRightW + rightPadX);
+        if (inLeft) heightTouchStartZone = 1;
+        else if (inRight) heightTouchStartZone = 3;
+        else if (inNext) heightTouchStartZone = 2;
       }
       if (heightTouchStartZone == 1) {
         heightTouchLock = true;
